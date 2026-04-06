@@ -1,0 +1,15 @@
+.git
+.gitignore
+.cursor
+__pycache__
+*.py[cod]
+.venv
+venv
+.env
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+bcrag_registry.json
+hq_test
+sample_docs

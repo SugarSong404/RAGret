@@ -1,0 +1,77 @@
+# bcrag — interactive shell, GPU PyTorch (CUDA), BCE + LangChain stack
+#
+# Host requirements: NVIDIA driver + NVIDIA Container Toolkit (Linux) or
+# Docker Desktop with WSL2 GPU (Windows). Run with: --gpus all
+#
+# Build:
+#   docker build -t bcrag .
+#
+# If Docker Hub is slow, override the base (example mirror — verify URL still works):
+#   docker build -t bcrag --build-arg PYTORCH_IMAGE=docker.m.daocloud.io/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime .
+#
+# Run (GPU):
+#   docker run --rm -it --gpus all bcrag
+#
+# Persistent data:
+#   docker run --rm -it --gpus all -v bcrag-data:/data -e BCRAG_REGISTRY=/data/bcrag_registry.json bcrag
+#
+# Inside the shell:
+#   python bcrag.py index --dir /data/corpus --register-as myindex
+#   python bcrag.py serve --host 0.0.0.0 --port 8765
+#
+# CPU-only hosts: use a local venv (see README Install) instead of this image.
+#
+# Base image tag is NOT fixed by bcrag — it is only a default pin for reproducible
+# builds. Pick any official pytorch/pytorch tag that matches your host NVIDIA
+# driver / CUDA (see https://hub.docker.com/r/pytorch/pytorch/tags ). Example
+# pattern: <pytorch>-cuda<CUDA>-cudnn<major>-runtime. Override with:
+#   docker build --build-arg PYTORCH_IMAGE=pytorch/pytorch:<tag-from-docker-hub> -t bcrag .
+
+ARG PYTORCH_IMAGE=pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+FROM ${PYTORCH_IMAGE}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    less \
+    nano \
+    procps \
+    unzip \
+    vim-tiny \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    HF_ENDPOINT=https://huggingface.co \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+# Base image already ships torch/torchvision with CUDA; do not reinstall CPU wheels.
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        "numpy>=1.24" \
+        "pydantic>=2" \
+        langchain-core \
+        langchain-community \
+        langchain-text-splitters \
+        BCEmbedding \
+        pypdf
+
+COPY . .
+
+RUN printf '%s\n' \
+    'if [ -d /app ]; then cd /app; fi' \
+    'alias ll="ls -la"' \
+    '# bcrag: python bcrag.py -h | index | search | serve' \
+    >> /root/.bashrc
+
+EXPOSE 8765
+
+CMD ["/bin/bash"]
