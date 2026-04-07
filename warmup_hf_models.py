@@ -26,7 +26,12 @@ RERANKER_MODEL = "maidalun1020/bce-reranker-base_v1"
 
 def main() -> None:
     hf = _root
-    if resolve_hf_snapshot_dir(EMBEDDING_MODEL, hf_home=hf, require_weights=True) is None:
+    if resolve_hf_snapshot_dir(
+        EMBEDDING_MODEL,
+        hf_home=hf,
+        require_weights=True,
+        require_tokenizer=True,
+    ) is None:
         print(f"Downloading BCE embedding {EMBEDDING_MODEL} …", flush=True)
         emb = HuggingFaceEmbeddings(
             model_name=EMBEDDING_MODEL,
@@ -38,7 +43,12 @@ def main() -> None:
     else:
         print(f"Skip download: {EMBEDDING_MODEL} already cached under {hf}", flush=True)
 
-    if resolve_hf_snapshot_dir(RERANKER_MODEL, hf_home=hf, require_weights=True) is None:
+    if resolve_hf_snapshot_dir(
+        RERANKER_MODEL,
+        hf_home=hf,
+        require_weights=True,
+        require_tokenizer=True,
+    ) is None:
         print(f"Downloading BCE reranker {RERANKER_MODEL} …", flush=True)
         RerankerModel(
             model_name_or_path=RERANKER_MODEL,

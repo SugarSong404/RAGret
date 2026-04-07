@@ -30,11 +30,36 @@ def snapshot_has_weights(snap: Path) -> bool:
     return False
 
 
+def snapshot_has_tokenizer_files(snap: Path) -> bool:
+    """True if ``snap`` contains core tokenizer assets."""
+    required_any = {
+        "tokenizer.json",
+        "vocab.txt",
+        "sentencepiece.bpe.model",
+        "tokenizer.model",
+    }
+    try:
+        for p in snap.rglob("*"):
+            if not p.is_file():
+                continue
+            if p.name in required_any:
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def snapshot_looks_complete(snap: Path) -> bool:
+    """True if ``snap`` has both model weights and tokenizer files."""
+    return snapshot_has_weights(snap) and snapshot_has_tokenizer_files(snap)
+
+
 def resolve_hf_snapshot_dir(
     repo_id: str,
     hf_home: str | Path | None = None,
     *,
     require_weights: bool = True,
+    require_tokenizer: bool = False,
 ) -> Path | None:
     """Latest usable snapshot for ``repo_id`` under hub or flat ``models--…`` layout."""
     if hf_home is None:
@@ -53,7 +78,11 @@ def resolve_hf_snapshot_dir(
                     continue
             except OSError:
                 continue
-            if require_weights and not snapshot_has_weights(child):
+            if require_weights and require_tokenizer and not snapshot_looks_complete(child):
+                continue
+            if require_weights and not require_tokenizer and not snapshot_has_weights(child):
+                continue
+            if require_tokenizer and not require_weights and not snapshot_has_tokenizer_files(child):
                 continue
             return child
     return None

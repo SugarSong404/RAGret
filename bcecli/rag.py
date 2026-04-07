@@ -185,7 +185,12 @@ def _local_snapshot_path_or_fail(repo_id: str, label: str) -> str:
             roots.append(p)
 
     for root in roots:
-        snap = resolve_hf_snapshot_dir(repo_id, hf_home=root, require_weights=True)
+        snap = resolve_hf_snapshot_dir(
+            repo_id,
+            hf_home=root,
+            require_weights=True,
+            require_tokenizer=True,
+        )
         if snap is None:
             continue
         s = str(root)
