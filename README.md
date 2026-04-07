@@ -145,6 +145,8 @@ cd ..
 python bcrag.py serve --host 0.0.0.0 --port 8765
 ```
 
+![](https://github.com/SugarSong404/bcrag/blob/dev/assets/screenshot.png?raw=true)
+
 Then open [http://127.0.0.1:8765](http://127.0.0.1:8765).
 
 ### Client
