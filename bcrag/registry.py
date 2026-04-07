@@ -1,4 +1,4 @@
-"""Named SQLite index registry (JSON file) for the bcrag HTTP server and optional CLI --register-as."""
+"""Logical name → SQLite path registry (JSON) for HTTP serve and CLI ``--register-as``."""
 from __future__ import annotations
 
 import json
@@ -28,7 +28,7 @@ class IndexRegistry:
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.Lock()
-        self._indexes: dict[str, str] = {}
+        self._indexes: dict[str, dict[str, str]] = {}
 
     def load(self) -> None:
         if not self.path.is_file():
@@ -39,7 +39,20 @@ class IndexRegistry:
         if not isinstance(idx, dict):
             self._indexes = {}
             return
-        self._indexes = {str(k): str(v) for k, v in idx.items()}
+        loaded: dict[str, dict[str, str]] = {}
+        for k, v in idx.items():
+            name = str(k)
+            if isinstance(v, str):
+                loaded[name] = {"db_path": v, "description": ""}
+            elif isinstance(v, dict):
+                db_path = str(v.get("db_path", "")).strip()
+                if not db_path:
+                    continue
+                loaded[name] = {
+                    "db_path": db_path,
+                    "description": str(v.get("description", "")).strip(),
+                }
+        self._indexes = loaded
 
     def _save_unlocked(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -49,12 +62,13 @@ class IndexRegistry:
         tmp.write_text(text, encoding="utf-8")
         tmp.replace(self.path)
 
-    def add(self, name: str, db_path: Path) -> str:
+    def add(self, name: str, db_path: Path, *, description: str = "") -> str:
         key = safe_index_name(name)
         resolved = str(db_path.resolve())
+        desc = str(description).strip()
         with self._lock:
             self.load()
-            self._indexes[key] = resolved
+            self._indexes[key] = {"db_path": resolved, "description": desc}
             self._save_unlocked()
         return key
 
@@ -72,20 +86,33 @@ class IndexRegistry:
         key = safe_index_name(name)
         with self._lock:
             self.load()
-            p = self._indexes.get(key)
+            rec = self._indexes.get(key)
+        if not rec:
+            return None
+        p = rec.get("db_path", "").strip()
         return Path(p) if p else None
+
+    def get_description(self, name: str) -> str | None:
+        key = safe_index_name(name)
+        with self._lock:
+            self.load()
+            rec = self._indexes.get(key)
+        if not rec:
+            return None
+        return rec.get("description", "")
 
     def list_entries(self) -> list[dict[str, Any]]:
         with self._lock:
             self.load()
             items = list(self._indexes.items())
         out: list[dict[str, Any]] = []
-        for n, p in sorted(items, key=lambda x: x[0].lower()):
+        for n, rec in sorted(items, key=lambda x: x[0].lower()):
+            p = rec.get("db_path", "")
             path = Path(p)
             out.append(
                 {
                     "name": n,
-                    "db_path": p,
+                    "description": rec.get("description", ""),
                     "sqlite_exists": path.is_file(),
                 }
             )

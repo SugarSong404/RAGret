@@ -1,52 +1,11 @@
 """
-LangChain-compatible BCE reranker using the pip-installed BCEmbedding RerankerModel.
+LangChain-compatible BCE reranker (BCEmbedding RerankerModel + langchain-core 1.x / Pydantic v2).
 
-Upstream BCEmbedding.tools.langchain.BCERerank targets older LangChain/Pydantic; this
-wrapper stays in bcrag and works with langchain-core 1.x + Pydantic v2.
+Upstream ``BCEmbedding.tools.langchain.BCERerank`` targets older LangChain; this wrapper stays here.
 """
 from __future__ import annotations
 
-import os
-
-
-def _patch_multiprocess_resource_tracker_py312() -> None:
-    """Py3.12: RLock has no _recursion_count; skip check when absent (multiprocess/datasets)."""
-    try:
-        from multiprocess.resource_tracker import ResourceTracker
-    except ImportError:
-        return
-    if getattr(ResourceTracker, "_bcrag_py312_fixed", False):
-        return
-
-    def _stop_locked(
-        self,
-        close=os.close,
-        waitpid=os.waitpid,
-        waitstatus_to_exitcode=os.waitstatus_to_exitcode,
-    ):
-        lock = getattr(self, "_lock", None)
-        if lock is not None:
-            fn = getattr(lock, "_recursion_count", None)
-            if callable(fn):
-                try:
-                    if fn() > 1:
-                        return self._reentrant_call_error()
-                except Exception:
-                    pass
-        if self._fd is None:
-            return
-        if self._pid is None:
-            return
-        close(self._fd)
-        self._fd = None
-        waitpid(self._pid, 0)
-        self._pid = None
-
-    ResourceTracker._stop_locked = _stop_locked  # type: ignore[assignment]
-    ResourceTracker._bcrag_py312_fixed = True
-
-
-_patch_multiprocess_resource_tracker_py312()
+import bcrag.compat  # noqa: F401 — multiprocess patch before other imports
 
 from typing import Any, Optional, Sequence
 
@@ -81,6 +40,7 @@ class BcragBCERerank(BaseDocumentCompressor):
             model_name_or_path=self.model,
             device=self.device,
             use_fp16=self.use_fp16,
+            local_files_only=True,
         )
 
     def compress_documents(

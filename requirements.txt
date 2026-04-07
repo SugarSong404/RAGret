@@ -1,0 +1,14 @@
+# Non-Docker: install PyTorch first (CUDA and/or Intel XPU build from pytorch.org — see README).
+#   pip install -r requirements.txt
+
+numpy>=1.24
+pydantic>=2
+langchain-core
+langchain-community
+langchain-huggingface
+langchain-text-splitters
+BCEmbedding
+# Hugging Face tokenizers: SentencePieceExtractor needs both (missing either → TikToken fallback → .bpe.model parse error).
+sentencepiece>=0.1.99
+protobuf>=3.20
+pypdf

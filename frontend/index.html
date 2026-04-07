@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>bcrag Console</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <div class="header-row">
+          <div>
+            <h1 data-i18n="appTitle">bcrag Knowledge Console</h1>
+            <p data-i18n="appSubtitle">Upload a tar archive to register an index, or delete existing ones.</p>
+          </div>
+          <button id="lang-btn" class="secondary" type="button">中文</button>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="card">
+          <h2 data-i18n="uploadTitle">Upload & Register</h2>
+          <form id="upload-form">
+            <label>
+              <span data-i18n="indexName">Index name</span>
+              <input id="kb-name" name="name" placeholder="e.g. handbook" required />
+            </label>
+            <label>
+              <span data-i18n="indexDescription">Description</span>
+              <textarea id="kb-description" name="description" rows="3" required></textarea>
+            </label>
+            <label>
+              <span data-i18n="archiveLabel">Archive (.tar / .tar.gz / .tgz)</span>
+              <input
+                id="kb-archive"
+                name="file"
+                type="file"
+                class="hidden-file-input"
+                accept=".tar,.tgz,.tar.gz,.tar.bz2,.tar.xz,application/x-tar"
+                required
+              />
+              <div class="file-picker-row">
+                <button type="button" id="pick-archive-btn" class="secondary" data-i18n="chooseFile">Choose File</button>
+                <span id="picked-file-name" data-i18n="noFileChosen">No file chosen</span>
+              </div>
+            </label>
+            <div class="progress-group">
+              <label class="progress-label"><span data-i18n="uploadProgress">Upload progress</span></label>
+              <progress id="upload-progress" value="0" max="100"></progress>
+              <span id="upload-progress-text">0%</span>
+            </div>
+            <div class="progress-group">
+              <label class="progress-label"><span data-i18n="buildProgress">Build progress</span></label>
+              <progress id="build-progress" value="0" max="100"></progress>
+              <span id="build-progress-text" data-i18n="buildIdle">Idle</span>
+            </div>
+            <button type="submit" id="submit-btn" data-i18n="startBuild">Build Index</button>
+          </form>
+        </section>
+
+        <section class="card">
+          <h2 data-i18n="registeredTitle">Registered Indexes</h2>
+          <button id="refresh-btn" class="secondary" data-i18n="refresh">Refresh</button>
+          <ul id="kb-list"></ul>
+        </section>
+      </main>
+
+      <footer id="status"></footer>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

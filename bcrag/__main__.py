@@ -1,8 +1,4 @@
-"""
-bcrag — CLI entry (thin shim).
-
-Implementation lives in the ``bcrag`` package: ``bcrag.cli``, ``bcrag.rag``, ``bcrag.server``, …
-"""
+"""Allow ``python -m bcrag`` from repo root (same as ``python bcrag.py``)."""
 from __future__ import annotations
 
 import sys
