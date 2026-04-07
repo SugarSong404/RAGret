@@ -122,7 +122,7 @@ class IndexRegistry:
 def safe_sqlite_basename(name: str) -> str:
     name = name.strip()
     name = re.sub(r'[<>:"/\\|?*]', "_", name)
-    return name or "bcrag_index"
+    return name or "bcecli_index"
 
 
 def resolve_db_path(work_path: Path, name: str | None) -> tuple[Path, Path]:

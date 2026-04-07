@@ -1,18 +1,18 @@
 """Repository root and Hugging Face cache layout helpers (safe before rag import / offline env).
 
-`default_hf_models_dir()` resolves to ``<repo>/models``. The ``bcrag`` package lives in
-``<repo>/bcrag/``, so ``BCRAG_REPO_ROOT`` is the parent of this package directory.
+`default_hf_models_dir()` resolves to ``<repo>/models``. The ``bcecli`` package lives in
+``<repo>/bcecli/``, so ``BCECLI_REPO_ROOT`` is the parent of this package directory.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-BCRAG_REPO_ROOT = Path(__file__).resolve().parent.parent
+BCECLI_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def default_hf_models_dir() -> Path:
-    return (BCRAG_REPO_ROOT / "models").resolve()
+    return (BCECLI_REPO_ROOT / "models").resolve()
 
 
 def snapshot_has_weights(snap: Path) -> bool:

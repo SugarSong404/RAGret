@@ -7,10 +7,10 @@ venv/
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
-bcrag_registry.json
+bcecli_registry.json
 # Local BCE / Hugging Face weights (default cache; large)
 models/
 .DS_Store
 frontend/node_modules/
 upload/
-.bcrag_uploads/
+.bcecli_uploads/

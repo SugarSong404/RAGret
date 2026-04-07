@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   build: {
-    outDir: "../bcrag/static",
+    outDir: "../bcecli/static",
     emptyOutDir: true,
   },
 });

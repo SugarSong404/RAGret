@@ -6,21 +6,21 @@ import os
 import sys
 from pathlib import Path
 
-from bcrag.registry import IndexRegistry, resolve_db_path
+from bcecli.registry import IndexRegistry, resolve_db_path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DB = REPO_ROOT / "index.sqlite"
 
 
 def _registry_file() -> Path:
-    env = os.environ.get("BCRAG_REGISTRY")
+    env = os.environ.get("BCECLI_REGISTRY")
     if env:
         return Path(env).expanduser().resolve()
-    return (REPO_ROOT / "bcrag_registry.json").resolve()
+    return (REPO_ROOT / "bcecli_registry.json").resolve()
 
 
 def _run_index(args: argparse.Namespace) -> int:
-    from bcrag.rag import index_workdir
+    from bcecli.rag import index_workdir
 
     try:
         work_path, db_path = resolve_db_path(args.dir, args.name)
@@ -54,17 +54,17 @@ def _run_index(args: argparse.Namespace) -> int:
 
 
 def _run_search(args: argparse.Namespace) -> int:
-    from bcrag.rag import search_db
+    from bcecli.rag import search_db
 
     db = args.db
     if db is None:
-        env_db = os.environ.get("BCRAG_DB")
+        env_db = os.environ.get("BCECLI_DB")
         db = Path(env_db) if env_db else DEFAULT_DB
     db = db.resolve()
     if not db.is_file():
         print(f"Index not found: {db}", file=sys.stderr)
-        print("Build one with:  python bcrag.py index --dir <corpus_path>", file=sys.stderr)
-        print("Or set BCRAG_DB to your .sqlite file.", file=sys.stderr)
+        print("Build one with:  python bcecli.py index --dir <corpus_path>", file=sys.stderr)
+        print("Or set BCECLI_DB to your .sqlite file.", file=sys.stderr)
         return 1
 
     try:
@@ -87,9 +87,9 @@ def main() -> int:
     os.environ.setdefault("HF_ENDPOINT", "https://huggingface.co")
 
     p = argparse.ArgumentParser(
-        prog="bcrag",
+        prog="bcecli",
         description=(
-            "bcrag — local RAG index (BCE embedding + rerank) stored in SQLite. "
+            "bcecli — local RAG index (BCE embedding + rerank) stored in SQLite. "
             "Subcommands: index (build), search (query), serve (HTTP API)."
         ),
     )
@@ -131,7 +131,7 @@ def main() -> int:
         "--registry",
         type=Path,
         default=None,
-        help="Registry JSON path (default: ./bcrag_registry.json or env BCRAG_REGISTRY)",
+        help="Registry JSON path (default: ./bcecli_registry.json or env BCECLI_REGISTRY)",
     )
 
     ps = sub.add_parser(
@@ -143,7 +143,7 @@ def main() -> int:
         "--db",
         type=Path,
         default=None,
-        help=f"SQLite index path; default: {DEFAULT_DB} or env BCRAG_DB",
+        help=f"SQLite index path; default: {DEFAULT_DB} or env BCECLI_DB",
     )
     ps.add_argument("-q", "--query", type=str, required=True, help="Search query")
     ps.add_argument("-k", type=int, default=10, help="Vector recall size")
@@ -156,8 +156,8 @@ def main() -> int:
         return _run_index(args)
     if args.cmd == "serve":
         if args.registry is not None:
-            os.environ["BCRAG_REGISTRY"] = str(args.registry.expanduser().resolve())
-        from bcrag.server import run_server
+            os.environ["BCECLI_REGISTRY"] = str(args.registry.expanduser().resolve())
+        from bcecli.server import run_server
 
         return run_server(host=args.host, port=args.port, repo_root=REPO_ROOT)
     return _run_search(args)

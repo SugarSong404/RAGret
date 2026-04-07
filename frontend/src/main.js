@@ -14,7 +14,7 @@ const pickedFileNameEl = document.getElementById("picked-file-name");
 const descInput = document.getElementById("kb-description");
 const nameInput = document.getElementById("kb-name");
 
-const STATE_KEY = "bcrag.frontend.state.v2";
+const STATE_KEY = "bcecli.frontend.state.v2";
 let currentLang = "en";
 let stagedUploadId = null;
 let currentJobId = null;
@@ -22,7 +22,7 @@ let uploadXhr = null;
 
 const i18n = {
   en: {
-    appTitle: "bcrag Knowledge Console",
+    appTitle: "bce-cli Knowledge Console",
     appSubtitle: "Upload a tar archive to register an index, or delete existing ones.",
     uploadTitle: "Upload & Register",
     indexName: "Index name",
@@ -60,7 +60,7 @@ const i18n = {
     phase_error: "Error",
   },
   zh: {
-    appTitle: "bcrag 知识库控制台",
+    appTitle: "bce-cli 知识库控制台",
     appSubtitle: "上传 tar 归档注册知识库，或删除已有知识库。",
     uploadTitle: "上传并注册",
     indexName: "知识库名称",

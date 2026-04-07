@@ -1,8 +1,8 @@
-# bcrag
+# bce-cli
 
 Local **RAG-style retrieval** over your documents: chunk → **BCE** embeddings → **SQLite** index → dense search → **BCE reranker**. Outputs ranked passages only (no LLM answer synthesis).
 
-**BCEmbedding** ([upstream](https://github.com/netease-youdao/BCEmbedding)) is a **normal Python dependency** (`pip install BCEmbedding`). This repo does **not** vendor that project; it adds a small LangChain-compatible rerank wrapper (`bcrag/rerank.py`) for current `langchain-core` / Pydantic v2.
+**BCEmbedding** ([upstream](https://github.com/netease-youdao/BCEmbedding)) is a **normal Python dependency** (`pip install BCEmbedding`). This repo does **not** vendor that project; it adds a small LangChain-compatible rerank wrapper (`bcecli/rerank.py`) for current `langchain-core` / Pydantic v2.
 
 ## How to deploy
 
@@ -33,7 +33,7 @@ export HF_ENDPOINT=https://hf-mirror.com
   `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/xpu`  
   (optional nightly: `--pre` + `…/whl/nightly/xpu`).
 3. **App deps:** `pip install -r requirements.txt`
-4. **Models (once, before `index` / `search`):** from **this repo root**, with network, **`python warmup_hf_models.py`** → fills **`./models`** (same default **`HF_HOME`** as **`serve`** / **`bcrag.rag`**; Docker images use **`HF_HOME=/opt/hf`** instead). If your shell still has **`HF_HOME=/opt/hf`** from Docker examples, **unset** it locally or weights land in the wrong tree. Or copy BCE weights into **`./models`** yourself. **`bcrag` does not download weights for you.**
+4. **Models (once, before `index` / `search`):** from **this repo root**, with network, **`python warmup_hf_models.py`** → fills **`./models`** (same default **`HF_HOME`** as **`serve`** / **`bcecli.rag`**; Docker images use **`HF_HOME=/opt/hf`** instead). If your shell still has **`HF_HOME=/opt/hf`** from Docker examples, **unset** it locally or weights land in the wrong tree. Or copy BCE weights into **`./models`** yourself. **`bcecli` does not download weights for you.**
 5. Run from repo root or set `**PYTHONPATH`** to the repo root.
 
 **Verify GPU**
@@ -52,8 +52,8 @@ Docker support in this repo is **CUDA-only** (`Dockerfile`). For Intel XPU, use 
 Build (weights are warmed into `**/opt/hf**` at image build time):
 
 ```bash
-docker build -t bcrag .
-docker build -t bcrag --build-arg HF_ENDPOINT=https://hf-mirror.com .
+docker build -t bcecli .
+docker build -t bcecli --build-arg HF_ENDPOINT=https://hf-mirror.com .
 ```
 
 - Base: `**pytorch/pytorch**` (CUDA tag must match the host driver — [tags](https://hub.docker.com/r/pytorch/pytorch/tags), override `**PYTORCH_IMAGE**` in `Dockerfile`).
@@ -61,24 +61,24 @@ docker build -t bcrag --build-arg HF_ENDPOINT=https://hf-mirror.com .
 - Run with `**--gpus all`** (or `'--gpus "device=0"'`).
 
 ```bash
-docker run --name bcrag -it --gpus all -p 8765:8765 bcrag
-docker run --rm --gpus all bcrag python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)"
+docker run --name bcecli -it --gpus all -p 8765:8765 bcecli
+docker run --rm --gpus all bcecli python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)"
 ```
 
-- Map `**8765:8765`** for HTTP. Inside: `python bcrag.py serve --host 0.0.0.0 --port 8765` (optional `**-e**` `**BCRAG_API_TOKEN**`).
+- Map `**8765:8765`** for HTTP. Inside: `python bcecli.py serve --host 0.0.0.0 --port 8765` (optional `**-e**` `**BCECLI_API_TOKEN**`).
 - Don’t mount an empty volume over `**/opt/hf**` unless you supply weights yourself.
 - **Persistent data**:
 
 ```bash
-docker run --name bcrag -it --gpus all -p 8765:8765 \
-  -v bcrag-data:/data \
-  -e BCRAG_REGISTRY=/data/bcrag_registry.json \
-  bcrag
+docker run --name bcecli -it --gpus all -p 8765:8765 \
+  -v bcecli-data:/data \
+  -e BCECLI_REGISTRY=/data/bcecli_registry.json \
+  bcecli
 ```
 
 ## Usage
 
-All entry points go through `**bcrag.py**`. Split responsibilities as follows.
+All entry points go through `**bcecli.py**`. Split responsibilities as follows.
 
 ### Server (index host)
 
@@ -93,18 +93,18 @@ Use the **server** role on the machine that:
 
 ```bash
 # Help
-python bcrag.py -h
+python bcecli.py -h
 
 # Build an index: writes <parent_of_corpus>/<name>.sqlite
-python bcrag.py index --dir path/to/corpus_folder
-python bcrag.py index --dir path/to/corpus_folder --name my_index
+python bcecli.py index --dir path/to/corpus_folder
+python bcecli.py index --dir path/to/corpus_folder --name my_index
 
 # Register a logical name for HTTP lookup (same host as `serve`)
-python bcrag.py index --dir path/to/corpus --register-as mydocs
+python bcecli.py index --dir path/to/corpus --register-as mydocs
 
 # Start the HTTP API (default bind: 0.0.0.0:8765)
-python bcrag.py serve
-python bcrag.py serve --host 0.0.0.0 --port 8765
+python bcecli.py serve
+python bcecli.py serve --host 0.0.0.0 --port 8765
 ```
 
 **HTTP API** — exposed by `serve`:
@@ -126,26 +126,26 @@ python bcrag.py serve --host 0.0.0.0 --port 8765
 
 | Variable          | Meaning                                                                                                           |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `BCRAG_REGISTRY`  | Path to the index registry JSON (default: `./bcrag_registry.json` under the repo root).                           |
-| `BCRAG_API_TOKEN` | If set, every HTTP request must send `Authorization: Bearer <token>`.                                             |
+| `BCECLI_REGISTRY`  | Path to the index registry JSON (default: `./bcecli_registry.json` under the repo root).                           |
+| `BCECLI_API_TOKEN` | If set, every HTTP request must send `Authorization: Bearer <token>`.                                             |
 | `HF_ENDPOINT`     | Hub URL for **warmup** / `**docker build`** downloads. Defaults to `**https://huggingface.co**` where applicable. |
 | `HF_HOME`         | Weight directory. **Default:** `**./models`** (local) or `**/opt/hf**` (Docker).                                  |
-| `BCRAG_DEVICE`    | Force `cuda:0` or `xpu:0` (optional). CPU is not supported.                                                       |
+| `BCECLI_DEVICE`    | Force `cuda:0` or `xpu:0` (optional). CPU is not supported.                                                       |
 
 
 ### Frontend (Vite, static by backend)
 
-`frontend/` is a Vite app. Build output goes to `bcrag/static`, and `python bcrag.py serve` serves it directly. You only run one backend service in production.
+`frontend/` is a Vite app. Build output goes to `bcecli/static`, and `python bcecli.py serve` serves it directly. You only run one backend service in production.
 
 ```bash
 cd frontend
 npm install
 npm run build
 cd ..
-python bcrag.py serve --host 0.0.0.0 --port 8765
+python bcecli.py serve --host 0.0.0.0 --port 8765
 ```
 
-![](https://github.com/SugarSong404/bcrag/blob/dev/assets/screenshot.png?raw=true)
+![](https://github.com/SugarSong404/bcecli/blob/main/assets/screenshot.png?raw=true)
 
 Then open [http://127.0.0.1:8765](http://127.0.0.1:8765).
 
@@ -153,9 +153,9 @@ Then open [http://127.0.0.1:8765](http://127.0.0.1:8765).
 
 Use the **client** role when you only need to **query** an existing deployment—without rebuilding indexes on that machine.
 
-**HTTP client (against `python bcrag.py serve`)**
+**HTTP client (against `python bcecli.py serve`)**
 
-You only need a tool that can issue HTTP requests (for example `curl`). Default server URL: `http://127.0.0.1:8765`. If `BCRAG_API_TOKEN` is set on the server, send the header on every request.
+You only need a tool that can issue HTTP requests (for example `curl`). Default server URL: `http://127.0.0.1:8765`. If `BCECLI_API_TOKEN` is set on the server, send the header on every request.
 
 ```bash
 # List indexes
@@ -179,7 +179,7 @@ curl -sS -H "Authorization: Bearer YOUR_TOKEN" "http://127.0.0.1:8765/api/indexe
 
 ### Agent Skill
 
-This repo includes a Agent Skill at **SKILL.md`**. It tells the AI assistant how to use **deployed bcrag HTTP API** safely and consistently:
+This repo includes a Agent Skill at **SKILL.md`**. It tells the AI assistant how to use **deployed bcecli HTTP API** safely and consistently:
 
 - **Retrieval:** run `**curl`** in the terminal — list indexes (`GET /api/indexes`), then search (`GET /api/search/{index_name}?query=...`). Parse the JSON `**result`** field (or `format=text`).
 - **Remote-first:** the skill assumes a **base URL** (and optional **bearer token** and **index name**) supplied by the user or environment — not hard-coded localhost paths.
@@ -198,7 +198,7 @@ Recursive under `--dir`: `.pdf`, `.txt`, `.md`.
 
 ## License
 
-- **bcrag**: Apache-2.0.
+- **bcecli**: Apache-2.0.
 - **BCEmbedding**: Apache-2.0 (see upstream repository).
 
 ## Upstream references

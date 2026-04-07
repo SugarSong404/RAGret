@@ -1,7 +1,7 @@
 """SQLite-backed BCE embeddings, chunk store, dense retrieval + rerank."""
 from __future__ import annotations
 
-import bcrag.compat  # noqa: F401 — multiprocess patch before torch / langchain
+import bcecli.compat  # noqa: F401 — multiprocess patch before torch / langchain
 
 import json
 import os
@@ -28,8 +28,8 @@ try:
 except ImportError:
     from langchain_community.embeddings import HuggingFaceEmbeddings
 
-from bcrag.paths import default_hf_models_dir, resolve_hf_snapshot_dir
-from bcrag.rerank import BcragBCERerank
+from bcecli.paths import default_hf_models_dir, resolve_hf_snapshot_dir
+from bcecli.rerank import BcecliBCERerank
 
 EMBEDDING_MODEL = "maidalun1020/bce-embedding-base_v1"
 RERANKER_MODEL = "maidalun1020/bce-reranker-base_v1"
@@ -65,8 +65,8 @@ def _prog(msg: str) -> None:
 def _hf_weights_hint() -> str:
     return (
         "BCE weights are missing on disk. "
-        f"HF_HOME (where bcrag looks): {os.environ.get('HF_HOME', '')}. "
-        "From the bcrag repo root with network run: python warmup_hf_models.py "
+        f"HF_HOME (where bcecli looks): {os.environ.get('HF_HOME', '')}. "
+        "From the bcecli repo root with network run: python warmup_hf_models.py "
         "(or set HF_HOME to the directory that already contains the Hub cache)."
     )
 
@@ -172,14 +172,34 @@ def _get_meta(conn: sqlite3.Connection, key: str) -> str | None:
 
 
 def _local_snapshot_path_or_fail(repo_id: str, label: str) -> str:
-    snap = resolve_hf_snapshot_dir(repo_id, hf_home=os.environ["HF_HOME"], require_weights=True)
-    if snap is not None:
+    roots: list[Path] = []
+    for raw in (
+        os.environ.get("HF_HOME"),
+        os.environ.get("SENTENCE_TRANSFORMERS_HOME"),
+        str(default_hf_models_dir()),
+    ):
+        if not raw:
+            continue
+        p = Path(raw).expanduser().resolve()
+        if p not in roots:
+            roots.append(p)
+
+    for root in roots:
+        snap = resolve_hf_snapshot_dir(repo_id, hf_home=root, require_weights=True)
+        if snap is None:
+            continue
+        s = str(root)
+        os.environ["HF_HOME"] = s
+        os.environ["SENTENCE_TRANSFORMERS_HOME"] = s
         return str(snap.resolve())
+
     root = os.environ.get("HF_HOME", "")
+    checked = ", ".join(str(p) for p in roots) or "(none)"
     raise RuntimeError(
         f"No on-disk snapshot for {label} ({repo_id!r}) under {root}. "
         "Expected …/hub/models--<org>--<name>/snapshots/<hash>/ or "
         "…/models--<org>--<name>/snapshots/<hash>/ (flat cache). "
+        f"Checked roots: {checked}. "
         "Run from repo root with network: python warmup_hf_models.py",
     )
 
@@ -218,12 +238,12 @@ def _embed_documents_with_progress(
     return out
 
 
-def make_reranker(device: str, top_n: int) -> BcragBCERerank:
+def make_reranker(device: str, top_n: int) -> BcecliBCERerank:
     dev = str(device)
     rerank_dev = "cpu" if dev.lower().startswith("xpu") else dev
     use_fp16 = rerank_dev.startswith("cuda") and torch.cuda.is_available()
     local = _local_snapshot_path_or_fail(RERANKER_MODEL, "BCE reranker")
-    return BcragBCERerank(
+    return BcecliBCERerank(
         model=local,
         top_n=top_n,
         device=rerank_dev,
@@ -241,12 +261,12 @@ def _xpu_available() -> bool:
 
 
 def resolve_device() -> str:
-    """Pick compute device: env BCRAG_DEVICE, else CUDA, else Intel XPU. CPU is not supported."""
-    override = (os.environ.get("BCRAG_DEVICE") or "").strip()
+    """Pick compute device: env BCECLI_DEVICE, else CUDA, else Intel XPU. CPU is not supported."""
+    override = (os.environ.get("BCECLI_DEVICE") or "").strip()
     if override:
         if override.lower() == "cpu":
             raise RuntimeError(
-                "bcrag does not support a CPU backend; use an NVIDIA GPU (CUDA) or "
+                "bcecli does not support a CPU backend; use an NVIDIA GPU (CUDA) or "
                 "Intel GPU (torch.xpu). See README (Dockerfile / Dockerfile.xpu).",
             )
         return override
@@ -264,7 +284,7 @@ def resolve_device() -> str:
 def _require_non_cpu_device(device: str) -> None:
     if str(device).strip().lower() == "cpu":
         raise RuntimeError(
-            "bcrag does not support device='cpu'; use CUDA or Intel XPU (see README).",
+            "bcecli does not support device='cpu'; use CUDA or Intel XPU (see README).",
         )
 
 
@@ -364,7 +384,7 @@ def _load_index(conn: sqlite3.Connection) -> tuple[np.ndarray, list[dict[str, An
     ).fetchall()
     if not rows:
         raise ValueError(
-            "Index is empty. Build it first: python bcrag.py index --dir <path>.",
+            "Index is empty. Build it first: python bcecli.py index --dir <path>.",
         )
     dim = _get_meta(conn, "embed_dim")
     if not dim:

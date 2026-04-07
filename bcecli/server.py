@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from bcrag.registry import IndexRegistry, safe_index_name
+from bcecli.registry import IndexRegistry, safe_index_name
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -47,8 +47,8 @@ def _run_index_job(
     description: str,
     upload_id: str,
 ) -> None:
-    from bcrag.rag import index_workdir
-    from bcrag.registry import resolve_db_path
+    from bcecli.rag import index_workdir
+    from bcecli.registry import resolve_db_path
 
     last_pct = [0]
 
@@ -143,14 +143,14 @@ def _run_index_job(
 
 
 def _registry_path(root: Path) -> Path:
-    env = os.environ.get("BCRAG_REGISTRY")
+    env = os.environ.get("BCECLI_REGISTRY")
     if env:
         return Path(env).expanduser().resolve()
-    return (root / "bcrag_registry.json").resolve()
+    return (root / "bcecli_registry.json").resolve()
 
 
 def _auth_ok(handler: BaseHTTPRequestHandler) -> bool:
-    token = os.environ.get("BCRAG_API_TOKEN")
+    token = os.environ.get("BCECLI_API_TOKEN")
     if not token:
         return True
     auth = handler.headers.get("Authorization", "")
@@ -210,10 +210,10 @@ def _safe_extract_tar(tf: tarfile.TarFile, dest: Path) -> None:
 
 
 def make_handler_class(registry: IndexRegistry, root: Path):
-    static_dir = (root / "bcrag" / "static").resolve()
+    static_dir = (root / "bcecli" / "static").resolve()
     upload_base = (root / "upload").resolve()
 
-    class BcragHTTPRequestHandler(BaseHTTPRequestHandler):
+    class BcecliHTTPRequestHandler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
             sys.stderr.write("%s - - [%s] %s\n" % (self.client_address[0], self.log_date_time_string(), fmt % args))
 
@@ -233,7 +233,7 @@ def make_handler_class(registry: IndexRegistry, root: Path):
             if not parts:
                 if self._serve_static_file("index.html"):
                     return
-                _send_json(self, 200, {"service": "bcrag", "api": "/api/indexes | /api/search/{index}?query=..."})
+                _send_json(self, 200, {"service": "bcecli", "api": "/api/indexes | /api/search/{index}?query=..."})
                 return
 
             if parts[0].lower() == "health" and len(parts) == 1:
@@ -266,7 +266,7 @@ def make_handler_class(registry: IndexRegistry, root: Path):
                     200,
                     {
                         "ok": True,
-                        "service": "bcrag",
+                        "service": "bcecli",
                         "endpoints": {
                             "list": "GET /api/indexes",
                             "search": "GET /api/search/{index}?query=...",
@@ -331,7 +331,7 @@ def make_handler_class(registry: IndexRegistry, root: Path):
                 )
                 return
 
-            from bcrag.rag import search_db
+            from bcecli.rag import search_db
 
             try:
                 result = search_db(
@@ -504,7 +504,7 @@ def make_handler_class(registry: IndexRegistry, root: Path):
                     "upload_id": upload_id,
                 },
                 daemon=True,
-                name=f"bcrag-build-{job_id[:8]}",
+                name=f"bcecli-build-{job_id[:8]}",
             ).start()
             _send_json(self, 202, {"ok": True, "job_id": job_id})
 
@@ -564,14 +564,14 @@ def make_handler_class(registry: IndexRegistry, root: Path):
             _send_bytes(self, 200, candidate.read_bytes(), ctype or "application/octet-stream")
             return True
 
-    return BcragHTTPRequestHandler
+    return BcecliHTTPRequestHandler
 
 
 def run_server(*, host: str, port: int, repo_root: Path | None = None) -> int:
     os.environ.setdefault("HF_ENDPOINT", "https://huggingface.co")
     root = (repo_root or REPO_ROOT).resolve()
     if "HF_HOME" not in os.environ:
-        from bcrag.paths import default_hf_models_dir
+        from bcecli.paths import default_hf_models_dir
 
         d = default_hf_models_dir()
         os.environ["HF_HOME"] = str(d)
@@ -583,7 +583,7 @@ def run_server(*, host: str, port: int, repo_root: Path | None = None) -> int:
 
     handler_cls = make_handler_class(registry, root)
     server = ThreadingHTTPServer((host, int(port)), handler_cls)
-    print(f"bcrag server http://{host}:{port}/  registry={reg_path}", flush=True)
+    print(f"bcecli server http://{host}:{port}/  registry={reg_path}", flush=True)
     print("API: GET /api/indexes | GET /api/search/{index}?query=... | POST/DELETE /api/indexes", flush=True)
     try:
         server.serve_forever()

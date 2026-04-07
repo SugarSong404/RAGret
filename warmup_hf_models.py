@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from bcrag.paths import default_hf_models_dir, resolve_hf_snapshot_dir
+from bcecli.paths import default_hf_models_dir, resolve_hf_snapshot_dir
 
 # Docker sets HF_HOME=/opt/hf in the Dockerfile before this runs; locally unset → repo ./models.
 os.environ.setdefault("HF_HOME", str(default_hf_models_dir()))

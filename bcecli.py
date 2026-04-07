@@ -1,13 +1,13 @@
 """
-bcrag — CLI entry (thin shim).
+bcecli — CLI entry (thin shim).
 
-Implementation lives in the ``bcrag`` package: ``bcrag.cli``, ``bcrag.rag``, ``bcrag.server``, …
+Implementation lives in the ``bcecli`` package: ``bcecli.cli``, ``bcecli.rag``, ``bcecli.server``, …
 """
 from __future__ import annotations
 
 import sys
 
-from bcrag.cli import main
+from bcecli.cli import main
 
 if __name__ == "__main__":
     try:
