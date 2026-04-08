@@ -142,6 +142,7 @@ def _run_index_job(
             app_store.create_knowledge_base(
                 name=key,
                 description=description,
+                readme_md=str(meta.get("readme_md") or ""),
                 db_path=str(db_path.resolve()),
                 owner_id=int(owner_user_id),
                 is_public=is_public_job,
@@ -596,6 +597,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
                     return
                 body = _serialize_kb(rec)
+                body["readme_md"] = str(rec.readme_md or "")
                 body["legacy_registry_only"] = False
                 if k != "superuser":
                     body["permission"] = {
@@ -1219,7 +1221,11 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 if "is_public" in data:
                     if app_store.update_knowledge_base_public(active_key, bool(data.get("is_public"))):
                         did = True
-                if not did and "description" not in data and "is_public" not in data and "name" not in data:
+                if "readme_md" in data:
+                    txt = str(data.get("readme_md") or "").strip()
+                    if app_store.update_knowledge_base_readme(active_key, txt):
+                        did = True
+                if not did and "description" not in data and "is_public" not in data and "name" not in data and "readme_md" not in data:
                     _send_json(self, 400, {"ok": False, "error": "No updates provided"})
                     return
                 if not did:
@@ -1237,7 +1243,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
             data = self._read_json_body()
             if data is None:
                 return
-            if "description" not in data and "is_public" not in data and "name" not in data:
+            if "description" not in data and "is_public" not in data and "name" not in data and "readme_md" not in data:
                 _send_json(self, 400, {"ok": False, "error": "No updates provided"})
                 return
             if "is_public" in data and not perm.is_owner:
@@ -1280,6 +1286,11 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     registry.add(active_key, cur, description=desc)
             if "is_public" in data:
                 if not app_store.update_knowledge_base_public(active_key, bool(data.get("is_public"))):
+                    _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
+                    return
+            if "readme_md" in data:
+                txt = str(data.get("readme_md") or "").strip()
+                if not app_store.update_knowledge_base_readme(active_key, txt):
                     _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
                     return
             _send_json(self, 200, {"ok": True, "name": active_key})
@@ -1398,12 +1409,13 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
 
             name_raw = data.get("name") or data.get("index")
             desc_raw = str(data.get("description") or "").strip()
+            readme_raw = str(data.get("readme_md") or "").strip()
             upload_id = data.get("upload_id")
-            if not name_raw or not upload_id or not desc_raw:
+            if not name_raw or not upload_id or not desc_raw or not readme_raw:
                 _send_json(
                     self,
                     400,
-                    {"ok": False, "error": "JSON must include non-empty name, description and upload_id"},
+                    {"ok": False, "error": "JSON must include non-empty name, description, readme_md and upload_id"},
                 )
                 return
             try:
@@ -1436,6 +1448,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 meta0 = {}
             meta0["is_public"] = is_public_flag
             meta0["icon"] = icon_key
+            meta0["readme_md"] = readme_raw
             meta_path.write_text(json.dumps(meta0, ensure_ascii=False) + "\n", encoding="utf-8")
 
             job_id = secrets.token_hex(12)

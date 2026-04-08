@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL COLLATE NOCASE UNIQUE,
     description TEXT NOT NULL DEFAULT '',
+    readme_md TEXT NOT NULL DEFAULT '',
     db_path TEXT NOT NULL,
     owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at REAL NOT NULL,
@@ -96,6 +97,10 @@ class SqliteAppStore:
         if "is_public" not in kb_cols:
             self._conn.execute(
                 "ALTER TABLE knowledge_bases ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0"
+            )
+        if "readme_md" not in kb_cols:
+            self._conn.execute(
+                "ALTER TABLE knowledge_bases ADD COLUMN readme_md TEXT NOT NULL DEFAULT ''"
             )
         if "icon" not in kb_cols:
             self._conn.execute(
@@ -387,6 +392,7 @@ class SqliteAppStore:
             id=int(kb["id"]),
             name=str(kb["name"]),
             description=str(kb["description"] or ""),
+            readme_md=str(kb["readme_md"] or ""),
             db_path=str(kb["db_path"]),
             owner_id=oid,
             is_public=pub,
@@ -402,6 +408,7 @@ class SqliteAppStore:
         *,
         name: str,
         description: str,
+        readme_md: str,
         db_path: str,
         owner_id: int,
         is_public: bool = False,
@@ -409,6 +416,7 @@ class SqliteAppStore:
     ) -> KBRecord:
         t = self._now()
         desc = str(description).strip()
+        readme = str(readme_md or "").strip()
         pub_i = 1 if is_public else 0
         icon_key = str(icon or "book").strip() or "book"
         with self._lock:
@@ -419,9 +427,9 @@ class SqliteAppStore:
                     INSERT INTO knowledge_bases(
                         name, description, db_path, owner_id, created_at, list_color_idx, is_public, icon
                     )
-                    VALUES(?,?,?,?,?,?,?,?)
+                    VALUES(?,?,?,?,?,?,?,?,?)
                     """,
-                    (name, desc, str(db_path), int(owner_id), t, color, pub_i, icon_key),
+                    (name, desc, readme, str(db_path), int(owner_id), t, color, pub_i, icon_key),
                 )
                 self._conn.commit()
                 kb_id = int(cur.lastrowid)
@@ -474,6 +482,19 @@ class SqliteAppStore:
             self._conn.execute(
                 "UPDATE knowledge_bases SET description = ? WHERE id = ?",
                 (desc, int(kb["id"])),
+            )
+            self._conn.commit()
+        return True
+
+    def update_knowledge_base_readme(self, name: str, readme_md: str) -> bool:
+        text = str(readme_md or "").strip()
+        with self._lock:
+            kb = self._kb_row_by_name(name)
+            if kb is None:
+                return False
+            self._conn.execute(
+                "UPDATE knowledge_bases SET readme_md = ? WHERE id = ?",
+                (text, int(kb["id"])),
             )
             self._conn.commit()
         return True

@@ -24,6 +24,7 @@ class KBRecord:
     id: int
     name: str
     description: str
+    readme_md: str
     db_path: str
     owner_id: int
     is_public: bool
@@ -56,6 +57,7 @@ class AppStore(Protocol):
         *,
         name: str,
         description: str,
+        readme_md: str,
         db_path: str,
         owner_id: int,
         is_public: bool = False,
@@ -69,6 +71,8 @@ class AppStore(Protocol):
     def delete_knowledge_base(self, name: str) -> bool: ...
 
     def update_knowledge_base_description(self, name: str, description: str) -> bool: ...
+
+    def update_knowledge_base_readme(self, name: str, readme_md: str) -> bool: ...
 
     def update_knowledge_base_public(self, name: str, is_public: bool) -> bool: ...
 

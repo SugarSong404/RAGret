@@ -144,6 +144,9 @@ const i18n = {
     addKbSubtitle: "Upload a tar archive, then name and describe your index.",
     indexName: "Name",
     indexDescription: "Description",
+    indexReadme: "README",
+    readmePreview: "Preview",
+    readmeEdit: "Edit",
     archiveLabel: "Archive (.tar / .tar.gz / .tgz)",
     chooseFile: "Choose file",
     noFileChosen: "No file chosen",
@@ -185,7 +188,7 @@ const i18n = {
     confirmDeleteKb: (n) => `Delete knowledge base "${n}"? This removes registration and the SQLite file.`,
     refresh: "Refresh",
     ready: "Ready.",
-    requireFields: "Name and description are required.",
+    requireFields: "Name, description and README are required.",
     requireStaged: "Upload a tar archive first.",
     uploadStart: "Uploading…",
     uploadStaged: "Upload done. Fill name and description, then build.",
@@ -280,6 +283,9 @@ const i18n = {
     addKbSubtitle: "上传 tar 归档，填写名称与描述后构建索引。",
     indexName: "名称",
     indexDescription: "描述",
+    indexReadme: "README",
+    readmePreview: "预览",
+    readmeEdit: "编辑",
     archiveLabel: "归档（.tar / .tar.gz / .tgz）",
     chooseFile: "选择文件",
     noFileChosen: "未选择文件",
@@ -321,7 +327,7 @@ const i18n = {
     confirmDeleteKb: (n) => `确认删除知识库「${n}」？将注销注册并删除 SQLite 文件。`,
     refresh: "刷新",
     ready: "就绪。",
-    requireFields: "请填写名称和描述。",
+    requireFields: "请填写名称、描述和 README。",
     requireStaged: "请先上传 tar 并完成上传。",
     uploadStart: "正在上传…",
     uploadStaged: "上传完成。填写名称与描述后构建。",
@@ -557,6 +563,64 @@ function esc(s) {
   const d = document.createElement("div");
   d.textContent = s;
   return d.innerHTML;
+}
+
+function markdownToHtml(md) {
+  const src = String(md || "").replace(/\r\n/g, "\n");
+  const lines = src.split("\n");
+  const out = [];
+  let inCode = false;
+  for (const raw of lines) {
+    const line = raw;
+    if (line.trim().startsWith("```")) {
+      if (!inCode) {
+        inCode = true;
+        out.push("<pre><code>");
+      } else {
+        inCode = false;
+        out.push("</code></pre>");
+      }
+      continue;
+    }
+    if (inCode) {
+      out.push(`${esc(line)}\n`);
+      continue;
+    }
+    if (/^###\s+/.test(line)) {
+      out.push(`<h3>${esc(line.replace(/^###\s+/, ""))}</h3>`);
+      continue;
+    }
+    if (/^##\s+/.test(line)) {
+      out.push(`<h2>${esc(line.replace(/^##\s+/, ""))}</h2>`);
+      continue;
+    }
+    if (/^#\s+/.test(line)) {
+      out.push(`<h1>${esc(line.replace(/^#\s+/, ""))}</h1>`);
+      continue;
+    }
+    if (/^-\s+/.test(line)) {
+      out.push(`<li>${esc(line.replace(/^-+\s+/, ""))}</li>`);
+      continue;
+    }
+    if (/^>\s+/.test(line)) {
+      out.push(`<blockquote>${esc(line.replace(/^>\s+/, ""))}</blockquote>`);
+      continue;
+    }
+    if (!line.trim()) {
+      out.push("");
+      continue;
+    }
+    let html = esc(line)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+    out.push(`<p>${html}</p>`);
+  }
+  let merged = out.join("\n");
+  merged = merged.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`);
+  if (inCode) merged += "</code></pre>";
+  return merged;
 }
 
 function showConfirmDialog(message) {
@@ -838,7 +902,8 @@ function bindUploadForm() {
     e.preventDefault();
     const name = document.getElementById("kb-name").value.trim();
     const description = document.getElementById("kb-description").value.trim();
-    if (!name || !description) return setStatus(T("requireFields"), true);
+    const readmeMd = document.getElementById("kb-readme").value.trim();
+    if (!name || !description || !readmeMd) return setStatus(T("requireFields"), true);
     if (!stagedUploadId) return setStatus(T("requireStaged"), true);
     const submitBtn = document.getElementById("submit-btn");
     submitBtn.disabled = true;
@@ -849,7 +914,7 @@ function bindUploadForm() {
       const start = await fetchJSON("/api/indexes/build", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description, upload_id: stagedUploadId, is_public }),
+        body: JSON.stringify({ name, description, readme_md: readmeMd, upload_id: stagedUploadId, is_public }),
       });
       const done = await pollJob(start.job_id);
       const builtName = done.result?.name || name;
@@ -869,6 +934,7 @@ function bindUploadForm() {
       document.getElementById("upload-progress-text").textContent = "0%";
       document.getElementById("kb-name").value = "";
       document.getElementById("kb-description").value = "";
+      document.getElementById("kb-readme").value = "";
       document.getElementById("build-progress").value = 0;
       document.getElementById("build-progress-text").textContent = T("buildIdle");
       saveState();
@@ -1118,6 +1184,7 @@ async function renderAddKb(user) {
               <form id="upload-form">
                 <label><span>${esc(T("indexName"))}</span><input id="kb-name" required /></label>
                 <label><span>${esc(T("indexDescription"))}</span><textarea id="kb-description" rows="3" required></textarea></label>
+                <label><span>${esc(T("indexReadme"))}</span><textarea id="kb-readme" rows="8" required></textarea></label>
                 <label>
                   <span>${esc(T("kbIcon"))}</span>
                   <input type="file" id="kb-icon-new-file" class="hidden-file-input" accept="image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp" />
@@ -1550,6 +1617,15 @@ async function renderKbPublicDetail(user, name) {
                 <p class="kb-detail-desc-text${meta.description ? "" : " muted"}">${meta.description ? esc(meta.description) : currentLang === "zh" ? "暂无描述" : "No description."}</p>
               </div>
               <hr class="hr-soft hr-soft--kb-detail" />
+              ${
+                meta.readme_md
+                  ? `<div class="kb-detail-block">
+                      <h2 class="kb-detail-block-title">${esc(T("indexReadme"))}</h2>
+                      <div class="md-content">${markdownToHtml(meta.readme_md)}</div>
+                    </div>
+                    <hr class="hr-soft hr-soft--kb-detail" />`
+                  : ""
+              }
               <div class="kb-detail-block">
                 <h2 class="kb-detail-block-title">${esc(T("kbVisibility"))}</h2>
                 <p class="muted small vis-hint-inline">
@@ -1686,6 +1762,22 @@ async function renderKbManage(user, name) {
           <h2 class="kb-detail-block-title">${esc(T("indexDescription"))}</h2>
           <p class="kb-detail-desc-text${meta?.description ? "" : " muted"}">${meta?.description ? esc(meta.description) : currentLang === "zh" ? "暂无描述" : "No description."}</p>
         </div>`;
+  const readmeSection =
+    canWrite && !legacy
+      ? `<div class="kb-detail-block">
+          <h2 class="kb-detail-block-title">${esc(T("indexReadme"))}</h2>
+          <div class="md-toggle-row">
+            <button type="button" class="secondary small" id="readme-edit-tab">${esc(T("readmeEdit"))}</button>
+            <button type="button" class="secondary small" id="readme-preview-tab">${esc(T("readmePreview"))}</button>
+          </div>
+          <textarea id="kb-readme-edit" class="kb-detail-textarea" rows="12">${esc(meta?.readme_md || "")}</textarea>
+          <div id="kb-readme-preview" class="md-preview" style="display:none">${meta?.readme_md ? markdownToHtml(meta.readme_md) : ""}</div>
+          <button type="button" id="save-readme-btn">${esc(T("saveDone"))}</button>
+        </div>`
+      : `<div class="kb-detail-block">
+          <h2 class="kb-detail-block-title">${esc(T("indexReadme"))}</h2>
+          <div class="md-preview">${meta?.readme_md ? markdownToHtml(meta.readme_md) : ""}</div>
+        </div>`;
 
   const membersSection =
     legacy || isPub
@@ -1712,6 +1804,8 @@ async function renderKbManage(user, name) {
                 ${visibilitySection}
                 ${!legacy ? `<hr class="hr-soft hr-soft--kb-detail" />` : ""}
                 ${descSection}
+                <hr class="hr-soft hr-soft--kb-detail" />
+                ${readmeSection}
                 ${membersSection ? `<hr class="hr-soft hr-soft--kb-detail" />${membersSection}` : ""}
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
@@ -1767,6 +1861,30 @@ async function renderKbManage(user, name) {
       }
     });
   }
+  document.getElementById("readme-edit-tab")?.addEventListener("click", () => {
+    document.getElementById("kb-readme-edit").style.display = "";
+    document.getElementById("kb-readme-preview").style.display = "none";
+  });
+  document.getElementById("readme-preview-tab")?.addEventListener("click", () => {
+    const text = document.getElementById("kb-readme-edit")?.value || "";
+    const p = document.getElementById("kb-readme-preview");
+    p.innerHTML = text ? markdownToHtml(text) : "";
+    p.style.display = "";
+    document.getElementById("kb-readme-edit").style.display = "none";
+  });
+  document.getElementById("save-readme-btn")?.addEventListener("click", async () => {
+    const readme_md = document.getElementById("kb-readme-edit")?.value?.trim() || "";
+    try {
+      await fetchJSON(`/api/kb/${encodeURIComponent(name)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ readme_md }),
+      });
+      setStatus(T("saveDone"));
+    } catch (e) {
+      setStatus(e.message, true);
+    }
+  });
   const doUploadKbIcon = async (f) => {
     if (!f) return;
     const fd = new FormData();

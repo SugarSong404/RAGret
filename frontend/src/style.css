@@ -825,6 +825,51 @@ button.small {
   gap: 10px;
 }
 
+.md-preview {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  line-height: 1.42;
+  font-size: 13px;
+}
+
+.md-toggle-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.md-content {
+  line-height: 1.42;
+  font-size: 13px;
+}
+
+.md-preview h1,
+.md-preview h2,
+.md-preview h3,
+.md-content h1,
+.md-content h2,
+.md-content h3 {
+  margin: 0 0 8px;
+}
+
+.md-preview p,
+.md-preview ul,
+.md-preview blockquote,
+.md-content p,
+.md-content ul,
+.md-content blockquote {
+  margin: 0 0 8px;
+}
+
+.md-preview blockquote,
+.md-content blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 10px;
+  color: var(--muted);
+}
+
 .vis-hint-inline {
   display: flex;
   align-items: flex-start;
