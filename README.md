@@ -101,7 +101,7 @@ Run a single backend service (`python bcecli.py serve`) that hosts both the API 
 
 For client-side scoped retrieval, set `BCECLI_API_KEY` (a user API key starting with `sk-`) and send it as `X-API-Key`. Use `GET /api/subscribe-indexes` for API key scope (owned + subscribed + permission-checked), and `GET /api/search/{index}` for queries. Do not use `GET /api/indexes` for API key scoped retrieval.
 
-![](https://github.com/SugarSong404/bcecli/blob/dev_webui/assets/screenshot.png?raw=true)
+![](https://github.com/SugarSong404/bce-cli/blob/dev_webui/assets/screenshot.png?raw=true)
 
 Then open [http://127.0.0.1:8765](http://127.0.0.1:8765).
 
