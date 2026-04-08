@@ -7,6 +7,10 @@ from __future__ import annotations
 
 import bcecli.compat  # noqa: F401 — multiprocess patch before other imports
 
+from bcecli.bce_embedding_rerank_patch import patch_bce_embedding_reranker_tokenize
+
+patch_bce_embedding_reranker_tokenize()
+
 from typing import Any, Optional, Sequence
 
 from langchain_core.callbacks.manager import Callbacks
