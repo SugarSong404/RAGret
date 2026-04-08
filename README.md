@@ -11,7 +11,7 @@ Pick **one** GPU stack (**CUDA** or **Intel XPU**) and **one** run mode (**local
 **Shared rules**
 
 - Choose **one** stack (**CUDA** *or* **Intel XPU**) and **one** way to run (**local Python** *or* **Docker**); don’t mix in the same environment.
-- **Hugging Face mirror (optional):** if downloads are slow or blocked, set `**HF_ENDPOINT`** before `**warmup_hf_models.py**` or `**docker build**` (examples below).
+- **Hugging Face mirror (optional):** if downloads are slow or blocked, set **`HF_ENDPOINT`** before **`warmup_hf_models.py`** or **`docker build`** (examples below).
 
 ```bash
 # Windows PowerShell
@@ -34,7 +34,7 @@ export HF_ENDPOINT=https://hf-mirror.com
   (optional nightly: `--pre` + `…/whl/nightly/xpu`).
 3. **App deps:** `pip install -r requirements.txt`
 4. **Models (once, before `index` / `search`):** from **this repo root**, with network, **`python warmup_hf_models.py`** → fills **`./models`** (same default **`HF_HOME`** as **`serve`** / **`bcecli.rag`**; Docker images use **`HF_HOME=/opt/hf`** instead). If your shell still has **`HF_HOME=/opt/hf`** from Docker examples, **unset** it locally or weights land in the wrong tree. Or copy BCE weights into **`./models`** yourself. **`bcecli` does not download weights for you.**
-5. Run from repo root or set `**PYTHONPATH`** to the repo root.
+5. Run from repo root or set **`PYTHONPATH`** to the repo root.
 
 **Verify GPU**
 
@@ -49,24 +49,24 @@ On **Intel XPU**, only **embedding** runs on the GPU; **rerank** falls back to *
 
 Docker support in this repo is **CUDA-only** (`Dockerfile`). For Intel XPU, use the **Local Python** path above.
 
-Build (weights are warmed into `**/opt/hf**` at image build time):
+Build (weights are warmed into **`/opt/hf`** at image build time):
 
 ```bash
 docker build -t bcecli .
 docker build -t bcecli --build-arg HF_ENDPOINT=https://hf-mirror.com .
 ```
 
-- Base: `**pytorch/pytorch**` (CUDA tag must match the host driver — [tags](https://hub.docker.com/r/pytorch/pytorch/tags), override `**PYTORCH_IMAGE**` in `Dockerfile`).
+- Base: **`pytorch/pytorch`** (CUDA tag must match the host driver — [tags](https://hub.docker.com/r/pytorch/pytorch/tags), override **`PYTORCH_IMAGE`** in `Dockerfile`).
 - Host: Linux + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html), or Windows **Docker Desktop + WSL2** with NVIDIA GPU.
-- Run with `**--gpus all`** (or `'--gpus "device=0"'`).
+- Run with **`--gpus all`** (or `'--gpus "device=0"'`).
 
 ```bash
 docker run --name bcecli -it --gpus all -p 8765:8765 bcecli
 docker run --rm --gpus all bcecli python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)"
 ```
 
-- Map `**8765:8765`** for HTTP. Inside: `python bcecli.py serve --host 0.0.0.0 --port 8765` (optional `**-e**` `**BCECLI_API_TOKEN**`).
-- Don’t mount an empty volume over `**/opt/hf**` unless you supply weights yourself.
+- Map **`8765:8765`** for HTTP. Inside: `python bcecli.py serve --host 0.0.0.0 --port 8765` (optional **`-e`** **`BCECLI_API_TOKEN`**).
+- Don’t mount an empty volume over **`/opt/hf`** unless you supply weights yourself.
 - **Persistent data**:
 
 ```bash
@@ -78,7 +78,7 @@ docker run --name bcecli -it --gpus all -p 8765:8765 \
 
 ## Usage
 
-All entry points go through `**bcecli.py**`. Split responsibilities as follows.
+All entry points go through **`bcecli.py`**. Split responsibilities as follows.
 
 ### Server (index host)
 
@@ -128,8 +128,8 @@ python bcecli.py serve --host 0.0.0.0 --port 8765
 | ----------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `BCECLI_REGISTRY`  | Path to the index registry JSON (default: `./bcecli_registry.json` under the repo root).                           |
 | `BCECLI_API_TOKEN` | If set, every HTTP request must send `Authorization: Bearer <token>`.                                             |
-| `HF_ENDPOINT`     | Hub URL for **warmup** / `**docker build`** downloads. Defaults to `**https://huggingface.co**` where applicable. |
-| `HF_HOME`         | Weight directory. **Default:** `**./models`** (local) or `**/opt/hf**` (Docker).                                  |
+| `HF_ENDPOINT`     | Hub URL for **warmup** / **`docker build`** downloads. Defaults to **`https://huggingface.co`** where applicable. |
+| `HF_HOME`         | Weight directory. **Default:** **`./models`** (local) or **`/opt/hf`** (Docker).                                  |
 | `BCECLI_DEVICE`    | Force `cuda:0` or `xpu:0` (optional). CPU is not supported.                                                       |
 
 
@@ -179,9 +179,9 @@ curl -sS -H "Authorization: Bearer YOUR_TOKEN" "http://127.0.0.1:8765/api/indexe
 
 ### Agent Skill
 
-This repo includes a Agent Skill at **SKILL.md`**. It tells the AI assistant how to use **deployed bcecli HTTP API** safely and consistently:
+This repo includes a Agent Skill at **`SKILL.md`**. It tells the AI assistant how to use **deployed bcecli HTTP API** safely and consistently:
 
-- **Retrieval:** run `**curl`** in the terminal — list indexes (`GET /api/indexes`), then search (`GET /api/search/{index_name}?query=...`). Parse the JSON `**result`** field (or `format=text`).
+- **Retrieval:** run **`curl`** in the terminal — list indexes (`GET /api/indexes`), then search (`GET /api/search/{index_name}?query=...`). Parse the JSON **`result`** field (or `format=text`).
 - **Remote-first:** the skill assumes a **base URL** (and optional **bearer token** and **index name**) supplied by the user or environment — not hard-coded localhost paths.
 - **Indexing:** index lifecycle can be managed via `POST /api/upload` + `POST /api/indexes/build` + job polling, `DELETE /api/indexes/{name}`, or CLI ops.
 
@@ -194,7 +194,7 @@ Recursive under `--dir`: `.pdf`, `.txt`, `.md`.
 - Embedding: `maidalun1020/bce-embedding-base_v1`
 - Reranker: `maidalun1020/bce-reranker-base_v1`
 
-**Local:** run `**warmup_hf_models.py`** (or supply files under `**./models**`) before `**index` / `search**`. **Docker:** weights are fetched during `**docker build`** unless you change the Dockerfile.
+**Local:** run **`warmup_hf_models.py`** (or supply files under **`./models`**) before **`index` / `search`**. **Docker:** weights are fetched during **`docker build`** unless you change the Dockerfile.
 
 ## License
 
