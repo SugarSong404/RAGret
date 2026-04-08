@@ -1411,11 +1411,11 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
             desc_raw = str(data.get("description") or "").strip()
             readme_raw = str(data.get("readme_md") or "").strip()
             upload_id = data.get("upload_id")
-            if not name_raw or not upload_id or not desc_raw or not readme_raw:
+            if not name_raw or not upload_id or not desc_raw:
                 _send_json(
                     self,
                     400,
-                    {"ok": False, "error": "JSON must include non-empty name, description, readme_md and upload_id"},
+                    {"ok": False, "error": "JSON must include non-empty name, description and upload_id"},
                 )
                 return
             try:

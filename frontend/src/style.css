@@ -928,6 +928,15 @@ button.small {
   margin-top: 16px;
 }
 
+/* Add-kb: label text → image / toggle row (divs don’t get input margin-top). */
+.add-kb-page label .kb-icon-manage-row {
+  margin-top: 12px;
+}
+
+.add-kb-page label .md-toggle-row {
+  margin-top: 12px;
+}
+
 .profile-avatar-preview {
   width: 96px;
   height: 96px;

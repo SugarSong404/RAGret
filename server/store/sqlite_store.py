@@ -425,7 +425,7 @@ class SqliteAppStore:
                 cur = self._conn.execute(
                     """
                     INSERT INTO knowledge_bases(
-                        name, description, db_path, owner_id, created_at, list_color_idx, is_public, icon
+                        name, description, readme_md, db_path, owner_id, created_at, list_color_idx, is_public, icon
                     )
                     VALUES(?,?,?,?,?,?,?,?,?)
                     """,

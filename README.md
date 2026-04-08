@@ -33,7 +33,13 @@ export HF_ENDPOINT=https://hf-mirror.com
   `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/xpu`  
   (optional nightly: `--pre` + `…/whl/nightly/xpu`).
 3. **App deps:** `pip install -r requirements.txt`
-4. **Models (once, before `index` / `search`):** from **this repo root**, with network, **`python warmup_hf_models.py`** → fills **`./models`** (same default **`HF_HOME`** as **`serve`** / **`bcecli.rag`**; Docker images use **`HF_HOME=/opt/hf`** instead). If your shell still has **`HF_HOME=/opt/hf`** from Docker examples, **unset** it locally or weights land in the wrong tree. Or copy BCE weights into **`./models`** yourself. **`bcecli` does not download weights for you.**
+4. **Models (once, before `index` / `search`):** from **this repo root**, with network:
+
+   ```bash
+   python warmup_hf_models.py
+   ```
+
+   That fills **`./models`** (same default **`HF_HOME`** as **`serve`** / **`bcecli.rag`**; Docker images use **`HF_HOME=/opt/hf`** instead). If your shell still has **`HF_HOME=/opt/hf`** from Docker examples, **unset** it locally or weights land in the wrong tree. Or copy BCE weights into **`./models`** yourself. **`bcecli` does not download weights for you.**
 5. Run from repo root or set **`PYTHONPATH`** to the repo root.
 
 **Verify GPU**
@@ -65,7 +71,13 @@ docker run --name bcecli -it --gpus all -p 8765:8765 bcecli
 docker run --rm --gpus all bcecli python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else None)"
 ```
 
-- Map **`8765:8765`** for HTTP. Inside: `python bcecli.py serve --host 0.0.0.0 --port 8765` (optional **`-e`** **`BCECLI_API_TOKEN`**).
+- Map **`8765:8765`** for HTTP. Inside the container:
+
+  ```bash
+  python bcecli.py serve --host 0.0.0.0 --port 8765
+  ```
+
+  (optional **`-e`** **`BCECLI_API_TOKEN`**).
 - Don’t mount an empty volume over **`/opt/hf`** unless you supply weights yourself.
 - **Persistent data**:
 
@@ -78,7 +90,13 @@ docker run --name bcecli -it --gpus all -p 8765:8765 \
 
 ## Usage
 
-Run a single backend service (`python bcecli.py serve`) that hosts both the API and built frontend (`bcecli/static`). The same instance handles authentication, KB permissions, retrieval APIs, and the web UI.
+Run a single backend service from the repo root:
+
+```bash
+python bcecli.py serve
+```
+
+It hosts both the API and built frontend (`bcecli/static`). The same instance handles authentication, KB permissions, retrieval APIs, and the web UI.
 
 ### Server environment variables
 
@@ -97,7 +115,7 @@ Run a single backend service (`python bcecli.py serve`) that hosts both the API 
 
 ### Frontend + API routing notes
 
-`frontend/` is a Vite app. Build output goes to `bcecli/static`, and `python bcecli.py serve` serves it directly. You only run one backend service in production.
+`frontend/` is a Vite app. Build output goes to `bcecli/static`; use **`python bcecli.py serve`** (see above) to serve it. You only run one backend service in production.
 
 For client-side scoped retrieval, set `BCECLI_API_KEY` (a user API key starting with `sk-`) and send it as `X-API-Key`. Use `GET /api/subscribe-indexes` for API key scope (owned + subscribed + permission-checked), and `GET /api/search/{index}` for queries. Do not use `GET /api/indexes` for API key scoped retrieval.
 
@@ -121,7 +139,7 @@ Recursive under `--dir`: `.pdf`, `.txt`, `.md`.
 - Embedding: `maidalun1020/bce-embedding-base_v1`
 - Reranker: `maidalun1020/bce-reranker-base_v1`
 
-**Local:** run **`warmup_hf_models.py`** (or supply files under **`./models`**) before **`index` / `search`**. **Docker:** weights are fetched during **`docker build`** unless you change the Dockerfile.
+**Local:** before **`index` / `search`**, run **`python warmup_hf_models.py`** from the repo root (or supply files under **`./models`**). **Docker:** weights are fetched during **`docker build`** unless you change the Dockerfile.
 
 ## License
 

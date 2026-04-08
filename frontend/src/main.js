@@ -188,7 +188,7 @@ const i18n = {
     confirmDeleteKb: (n) => `Delete knowledge base "${n}"? This removes registration and the SQLite file.`,
     refresh: "Refresh",
     ready: "Ready.",
-    requireFields: "Name, description and README are required.",
+    requireFields: "Name and description are required.",
     requireStaged: "Upload a tar archive first.",
     uploadStart: "Uploading…",
     uploadStaged: "Upload done. Fill name and description, then build.",
@@ -327,7 +327,7 @@ const i18n = {
     confirmDeleteKb: (n) => `确认删除知识库「${n}」？将注销注册并删除 SQLite 文件。`,
     refresh: "刷新",
     ready: "就绪。",
-    requireFields: "请填写名称、描述和 README。",
+    requireFields: "请填写名称和描述。",
     requireStaged: "请先上传 tar 并完成上传。",
     uploadStart: "正在上传…",
     uploadStaged: "上传完成。填写名称与描述后构建。",
@@ -903,7 +903,7 @@ function bindUploadForm() {
     const name = document.getElementById("kb-name").value.trim();
     const description = document.getElementById("kb-description").value.trim();
     const readmeMd = document.getElementById("kb-readme").value.trim();
-    if (!name || !description || !readmeMd) return setStatus(T("requireFields"), true);
+    if (!name || !description) return setStatus(T("requireFields"), true);
     if (!stagedUploadId) return setStatus(T("requireStaged"), true);
     const submitBtn = document.getElementById("submit-btn");
     submitBtn.disabled = true;
@@ -1184,10 +1184,21 @@ async function renderAddKb(user) {
               <form id="upload-form">
                 <label><span>${esc(T("indexName"))}</span><input id="kb-name" required /></label>
                 <label><span>${esc(T("indexDescription"))}</span><textarea id="kb-description" rows="3" required></textarea></label>
-                <label><span>${esc(T("indexReadme"))}</span><textarea id="kb-readme" rows="8" required></textarea></label>
+                <label>
+                  <span>${esc(T("indexReadme"))}</span>
+                  <div class="md-toggle-row">
+                    <button type="button" class="secondary small" id="readme-add-edit-tab">${esc(T("readmeEdit"))}</button>
+                    <button type="button" class="secondary small" id="readme-add-preview-tab">${esc(T("readmePreview"))}</button>
+                  </div>
+                  <textarea id="kb-readme" rows="8"></textarea>
+                  <div id="kb-readme-add-preview" class="md-preview" style="display:none"></div>
+                </label>
                 <label>
                   <span>${esc(T("kbIcon"))}</span>
                   <input type="file" id="kb-icon-new-file" class="hidden-file-input" accept="image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp" />
+                  <div class="kb-icon-manage-row">
+                    <img id="kb-icon-add-preview" class="kb-manage-icon-preview" src="${DEFAULT_KB_ICON_URL}" alt="" />
+                  </div>
                   <div class="file-picker-row">
                     <button type="button" class="secondary" id="pick-kb-icon-btn">${esc(T("uploadKbIcon"))}</button>
                   </div>
@@ -1228,6 +1239,38 @@ async function renderAddKb(user) {
   document.getElementById("cancel-add-kb")?.addEventListener("click", () => go("/"));
   document.getElementById("pick-kb-icon-btn")?.addEventListener("click", () => {
     document.getElementById("kb-icon-new-file")?.click();
+  });
+  document.getElementById("readme-add-edit-tab")?.addEventListener("click", () => {
+    document.getElementById("kb-readme").style.display = "";
+    document.getElementById("kb-readme-add-preview").style.display = "none";
+  });
+  document.getElementById("readme-add-preview-tab")?.addEventListener("click", () => {
+    const text = document.getElementById("kb-readme")?.value || "";
+    const p = document.getElementById("kb-readme-add-preview");
+    p.innerHTML = text ? markdownToHtml(text) : "";
+    p.style.display = "";
+    document.getElementById("kb-readme").style.display = "none";
+  });
+  document.getElementById("kb-icon-new-file")?.addEventListener("change", (e) => {
+    const f = e.target?.files?.[0] || null;
+    const img = document.getElementById("kb-icon-add-preview");
+    if (!img) return;
+    const prev = img.dataset.previewUrl;
+    if (prev) {
+      try {
+        URL.revokeObjectURL(prev);
+      } catch {
+        /* ignore */
+      }
+      delete img.dataset.previewUrl;
+    }
+    if (!f) {
+      img.src = DEFAULT_KB_ICON_URL;
+      return;
+    }
+    const url = URL.createObjectURL(f);
+    img.dataset.previewUrl = url;
+    img.src = url;
   });
   wireKbLockChoiceNewForm();
   bindUploadForm();
