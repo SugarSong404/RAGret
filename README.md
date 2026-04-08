@@ -78,112 +78,39 @@ docker run --name bcecli -it --gpus all -p 8765:8765 \
 
 ## Usage
 
-All entry points go through **`bcecli.py`**. Split responsibilities as follows.
+Run a single backend service (`python bcecli.py serve`) that hosts both the API and built frontend (`bcecli/static`). The same instance handles authentication, KB permissions, retrieval APIs, and the web UI.
 
-### Server (index host)
-
-Use the **server** role on the machine that:
-
-- Holds or can read the document corpus
-- Runs **embedding and reranking** on **CUDA or Intel XPU** (GPU required)
-- Builds or updates the SQLite index
-- Optionally runs the HTTP API + static web UI for remote or scripted queries
-
-**Typical workflow**
-
-```bash
-# Help
-python bcecli.py -h
-
-# Build an index: writes <parent_of_corpus>/<name>.sqlite
-python bcecli.py index --dir path/to/corpus_folder
-python bcecli.py index --dir path/to/corpus_folder --name my_index
-
-# Register a logical name for HTTP lookup (same host as `serve`)
-python bcecli.py index --dir path/to/corpus --register-as mydocs
-
-# Start the HTTP API (default bind: 0.0.0.0:8765)
-python bcecli.py serve
-python bcecli.py serve --host 0.0.0.0 --port 8765
-```
-
-**HTTP API** — exposed by `serve`:
-
-
-| Method | Path                            | Purpose                                                                                                                                                                                                         |
-| ------ | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/search/{index}?query=...` | Resolve `index` in the registry → SQLite path, run search. Optional query params: `k`, `threshold`, `top_n`, `q`; `format=text` returns plain text instead of JSON (`result` mirrors CLI `search` output). |
-| GET    | `/api/indexes`                  | List registered indexes (`name`, `description`, `sqlite_exists`).                                                                                                                                               |
-| POST   | `/api/upload`                   | Stage a tar only: multipart field `file`. Returns `upload_id` (use with build).                                                                                                                                 |
-| POST   | `/api/indexes/build`            | Start indexing: JSON `{"name":"<index>","description":"<desc>","upload_id":"<id>"}`. `name`/`description` are required. Returns `202` + `job_id`. Progress: `GET /api/jobs/{job_id}` (`status`, `phase`, `percent`, `detail`). After the job finishes, only that upload task directory is removed. |
-| GET    | `/api/jobs/{job_id}`            | Poll build job status until `status` is `done` or `error`.                                                                                                                                                      |
-| DELETE | `/api/indexes/{name}`           | Remove index registration. Default also deletes SQLite (`?delete_sqlite=1`).                                                                                                                                   |
-| GET    | `/`, `/health`                  | UI home (if frontend built) or service discovery / health.                                                                                                                                                     |
-
-
-**Environment variables (server-focused)**
+### Server environment variables
 
 
 | Variable          | Meaning                                                                                                           |
 | ----------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `BCECLI_REGISTRY`  | Path to the index registry JSON (default: `./bcecli_registry.json` under the repo root).                           |
-| `BCECLI_API_TOKEN` | If set, every HTTP request must send `Authorization: Bearer <token>`.                                             |
+| `BCECLI_APP_STORE` | App metadata backend. Default `sqlite` (see `server/store/factory.py`).                                          |
+| `BCECLI_APP_DB`    | SQLite path for users/KB ACL (default: `<repo>/data/bcecli_app.sqlite`).                                           |
+| `BCECLI_SESSION_TTL` | Session lifetime in seconds (default: 30 days).                                                                |
+| `BCECLI_API_TOKEN` | If set, matching `Authorization: Bearer <token>` acts as **superuser** (not a substitute for user session on upload/build). |
 | `HF_ENDPOINT`     | Hub URL for **warmup** / **`docker build`** downloads. Defaults to **`https://huggingface.co`** where applicable. |
 | `HF_HOME`         | Weight directory. **Default:** **`./models`** (local) or **`/opt/hf`** (Docker).                                  |
 | `BCECLI_DEVICE`    | Force `cuda:0` or `xpu:0` (optional). CPU is not supported.                                                       |
 
 
-### Frontend (Vite, static by backend)
+### Frontend + API routing notes
 
 `frontend/` is a Vite app. Build output goes to `bcecli/static`, and `python bcecli.py serve` serves it directly. You only run one backend service in production.
 
-```bash
-cd frontend
-npm install
-npm run build
-cd ..
-python bcecli.py serve --host 0.0.0.0 --port 8765
-```
+For client-side scoped retrieval, set `BCECLI_API_KEY` (a user API key starting with `sk-`) and send it as `X-API-Key`. Use `GET /api/subscribe-indexes` for API key scope (owned + subscribed + permission-checked), and `GET /api/search/{index}` for queries. Do not use `GET /api/indexes` for API key scoped retrieval.
 
-![](https://github.com/SugarSong404/bcecli/blob/main/assets/screenshot.png?raw=true)
+![](https://github.com/SugarSong404/bcecli/blob/dev_webui/assets/screenshot.png?raw=true)
 
 Then open [http://127.0.0.1:8765](http://127.0.0.1:8765).
 
-### Client
-
-Use the **client** role when you only need to **query** an existing deployment—without rebuilding indexes on that machine.
-
-**HTTP client (against `python bcecli.py serve`)**
-
-You only need a tool that can issue HTTP requests (for example `curl`). Default server URL: `http://127.0.0.1:8765`. If `BCECLI_API_TOKEN` is set on the server, send the header on every request.
-
-```bash
-# List indexes
-curl -sS "http://127.0.0.1:8765/api/indexes"
-
-# Search (JSON body includes field "result")
-curl -sS -G "http://127.0.0.1:8765/api/search/mydocs" --data-urlencode "query=your question here"
-```
-
-PowerShell example:
-
-```powershell
-curl.exe -sS -G "http://127.0.0.1:8765/api/search/mydocs" --data-urlencode "query=your question here"
-```
-
-With bearer token:
-
-```bash
-curl -sS -H "Authorization: Bearer YOUR_TOKEN" "http://127.0.0.1:8765/api/indexes"
-```
-
 ### Agent Skill
 
-This repo includes a Agent Skill at **`SKILL.md`**. It tells the AI assistant how to use **deployed bcecli HTTP API** safely and consistently:
+This repo includes a Agent Skill at **`SKILL.md`**.
 
-- **Retrieval:** run **`curl`** in the terminal — list indexes (`GET /api/indexes`), then search (`GET /api/search/{index_name}?query=...`). Parse the JSON **`result`** field (or `format=text`).
-- **Remote-first:** the skill assumes a **base URL** (and optional **bearer token** and **index name**) supplied by the user or environment — not hard-coded localhost paths.
-- **Indexing:** index lifecycle can be managed via `POST /api/upload` + `POST /api/indexes/build` + job polling, `DELETE /api/indexes/{name}`, or CLI ops.
+- It guides AI assistants to use bce-cli in a safe and consistent way for retrieval workflows.
+- Before running skill commands, users should declare `BCECLI_API_KEY` in their environment; skill commands should read that env var and avoid exposing secret values in chat/output.
 
 ## Corpus format
 
