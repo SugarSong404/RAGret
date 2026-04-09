@@ -119,7 +119,7 @@ It hosts both the API and built frontend (`bcecli/static`). The same instance ha
 
 For client-side scoped retrieval, set `BCECLI_API_KEY` (a user API key starting with `sk-`) and send it as `X-API-Key`. Use `GET /api/subscribe-indexes` for API key scope (owned + subscribed + permission-checked), and `GET /api/search/{index}` for queries. Do not use `GET /api/indexes` for API key scoped retrieval.
 
-![](https://github.com/SugarSong404/bce-cli/blob/dev_webui/assets/screenshot.png?raw=true)
+![](https://github.com/SugarSong404/bce-cli/blob/dev/assets/screenshot.png?raw=true)
 
 Then open [http://127.0.0.1:8765](http://127.0.0.1:8765).
 

@@ -8,7 +8,9 @@ const DEFAULT_KB_ICON_URL = "/default-kb.svg";
 
 let currentLang = "en";
 let stagedUploadId = null;
-let currentJobId = null;
+/** Manage-page corpus update: staged tar (not persisted across reload). */
+let manageCorpusUploadId = null;
+let manageCorpusKbFor = null;
 let uploadXhr = null;
 
 /** Shared avatar blobs keyed by `${userId}:1` (has custom avatar). */
@@ -190,9 +192,41 @@ const i18n = {
     ready: "Ready.",
     requireFields: "Name and description are required.",
     requireStaged: "Upload a tar archive first.",
+    requireStagedManage: "Upload a tar archive first, then rebuild the index.",
+    requireDescriptionForRebuild: "Add a non-empty description (above) before rebuilding.",
     uploadStart: "Uploading…",
     uploadStaged: "Upload done. Fill name and description, then build.",
+    uploadStagedManage: "Upload complete. Click rebuild to update the index (incremental when possible).",
     uploadFailed: "Upload failed.",
+    kbUpdateCorpusTitle: "Update corpus",
+    kbUpdateCorpusHint:
+      "Upload a new tar with the same folder layout. The server compares file fingerprints and re-embeds only changed files when possible.",
+    updateCorpusRebuild: "Rebuild index",
+    kbManageCorpusStaged: "Tar archive staged for this library — click rebuild when ready.",
+    navTasks: "Tasks",
+    tasksTitle: "Build tasks",
+    tasksSubtitle: "Queued and running index jobs for your account.",
+    tasksEmpty: "No tasks yet.",
+    taskDetailTitle: "Task",
+    taskOpCreate: "Create library",
+    taskOpUpdate: "Update corpus",
+    taskCancel: "Cancel task",
+    taskCancelConfirm: "Cancel this task?",
+    phase_cancelled: "Cancelled",
+    taskEnqueued: "Task queued. Open the tasks page to track progress.",
+    taskEnqueuedHint: "Rebuild runs as a background task; this library stays searchable until the swap completes.",
+    tasksSearchPlaceholder: "Search by library name or status",
+    taskStatusTitle: "Status",
+    taskProgressTitle: "Progress",
+    taskCardCreate: "Create",
+    taskCardUpdate: "Update",
+    taskCardQueued: "Queued",
+    taskCardRunning: "Running",
+    taskCardRunningHint: "Build in progress",
+    taskBackToList: "Back to task list",
+    taskNotFoundOrDone: "This task is no longer available.",
+    taskJobRemovedAfterDone: "Build finished. Returning to tasks.",
+    taskCancelledRemoved: "Task cancelled.",
     buildDone: (n) => `Built "${n}".`,
     phase_queued: "Queued",
     phase_extract: "Extract",
@@ -329,9 +363,41 @@ const i18n = {
     ready: "就绪。",
     requireFields: "请填写名称和描述。",
     requireStaged: "请先上传 tar 并完成上传。",
+    requireStagedManage: "请先上传 tar，再点击重建索引。",
+    requireDescriptionForRebuild: "请先填写非空描述（上方描述框）后再重建。",
     uploadStart: "正在上传…",
     uploadStaged: "上传完成。填写名称与描述后构建。",
+    uploadStagedManage: "上传完成。点击重建索引以更新语料（在条件允许时走增量更新）。",
     uploadFailed: "上传失败。",
+    kbUpdateCorpusTitle: "更新语料",
+    kbUpdateCorpusHint:
+      "上传新的 tar，目录结构可与上次一致。服务端按文件指纹比对，尽量只对变更文件重新向量化。",
+    updateCorpusRebuild: "重建索引",
+    kbManageCorpusStaged: "已为该知识库暂存 tar — 准备好后点击重建索引。",
+    navTasks: "任务",
+    tasksTitle: "构建任务",
+    tasksSubtitle: "当前账号的排队与运行中的索引任务。",
+    tasksEmpty: "暂无任务。",
+    taskDetailTitle: "任务",
+    taskOpCreate: "创建知识库",
+    taskOpUpdate: "更新语料",
+    taskCancel: "取消任务",
+    taskCancelConfirm: "确认取消该任务？",
+    phase_cancelled: "已取消",
+    taskEnqueued: "任务已加入队列，可在任务页查看进度。",
+    taskEnqueuedHint: "重建在后台排队执行；在替换完成前仍可正常检索本库。",
+    tasksSearchPlaceholder: "按知识库名称或状态搜索",
+    taskStatusTitle: "状态",
+    taskProgressTitle: "进度",
+    taskCardCreate: "创建",
+    taskCardUpdate: "更新",
+    taskCardQueued: "排队",
+    taskCardRunning: "运行中",
+    taskCardRunningHint: "正在构建",
+    taskBackToList: "返回任务列表",
+    taskNotFoundOrDone: "该任务已结束或不存在。",
+    taskJobRemovedAfterDone: "构建已完成，正在返回任务列表。",
+    taskCancelledRemoved: "任务已取消。",
     buildDone: (n) => `已构建「${n}」。`,
     phase_queued: "排队",
     phase_extract: "解压",
@@ -459,6 +525,12 @@ async function fetchJSON(url, options = {}) {
   return data;
 }
 
+/** Job row removed after terminal state (404) — same as unknown id for API. */
+function isJobGoneError(e) {
+  const m = String(e?.message || "");
+  return m === "Unknown job" || /\b404\b/.test(m);
+}
+
 function go(path) {
   history.pushState({}, "", path);
   render();
@@ -474,6 +546,16 @@ function parseRoute() {
   if (p === "/my-kb") return { type: "myKb" };
   if (p === "/profile") return { type: "profile" };
   if (p === "/change-password") return { type: "changePassword" };
+  if (p === "/tasks" || p === "/tasks/") return { type: "tasks" };
+  if (p.startsWith("/tasks/")) {
+    const rest = p
+      .slice("/tasks/".length)
+      .split("/")
+      .filter(Boolean)
+      .map((s) => decodeURIComponent(s));
+    if (rest[0]) return { type: "taskDetail", jobId: rest[0] };
+    return { type: "tasks" };
+  }
   if (p.startsWith("/kb/")) {
     const segs = p
       .slice(4)
@@ -493,29 +575,23 @@ function phaseText(phase) {
   return T(`phase_${phase || "queued"}`) || String(phase || "");
 }
 
-async function pollJob(jobId) {
-  currentJobId = jobId;
-  saveState();
-  const buildProgressEl = document.getElementById("build-progress");
-  const buildProgressTextEl = document.getElementById("build-progress-text");
+async function pollJobUntilTerminal(jobId, onTick) {
   while (true) {
-    const job = await fetchJSON(`/api/jobs/${encodeURIComponent(jobId)}`);
-    if (buildProgressEl) buildProgressEl.value = Number(job.percent || 0);
-    if (buildProgressTextEl) {
-      buildProgressTextEl.textContent = `${job.percent || 0}% — ${phaseText(job.phase)}${job.detail ? ` · ${job.detail}` : ""}`;
+    let job;
+    try {
+      job = await fetchJSON(`/api/jobs/${encodeURIComponent(jobId)}`);
+    } catch (e) {
+      if (isJobGoneError(e)) {
+        return { status: "done", _jobRemoved: true };
+      }
+      throw e;
     }
-    saveState();
-    if (job.status === "done") {
-      currentJobId = null;
-      saveState();
-      return job;
-    }
-    if (job.status === "error") {
-      currentJobId = null;
-      saveState();
-      throw new Error(job.error || "Build failed");
-    }
-    await new Promise((r) => setTimeout(r, 500));
+    if (onTick) onTick(job);
+    if (job.status === "done") return job;
+    if (job.status === "error") return job;
+    if (job.status === "cancelled") return job;
+    const delayMs = String(job.status) === "queued" ? 2000 : 900;
+    await new Promise((r) => setTimeout(r, delayMs));
   }
 }
 
@@ -524,7 +600,6 @@ function saveState() {
     const payload = JSON.stringify({
       lang: currentLang,
       stagedUploadId,
-      currentJobId,
     });
     localStorage.setItem(STATE_KEY, payload);
     localStorage.setItem(UI_LANG_KEY, currentLang);
@@ -723,9 +798,41 @@ function renderKbCardsInnerHtml(indexes, mode) {
     .join("");
 }
 
+function renderTaskCardsInnerHtml(jobs) {
+  return jobs
+    .map((j, idx) => {
+      const cidx = idx % 5;
+      const jid = String(j.job_id || "");
+      const opText = String(j.op) === "update" ? T("taskCardUpdate") : T("taskCardCreate");
+      const st = String(j.status || "").toLowerCase();
+      const stateText = st === "running" ? T("taskCardRunning") : T("taskCardQueued");
+      const runHint = esc(T("taskCardRunningHint"));
+      const runningCorner =
+        st === "running"
+          ? `<div class="kb-card-running-corner" title="${runHint}" aria-label="${runHint}"><span class="task-card-running-spin" aria-hidden="true"></span></div>`
+          : "";
+      return `<article class="kb-card kb-card--tone${cidx}" data-task-job="${esc(jid)}">
+                  <h3 class="kb-card-title-row"><img class="kb-card-kb-icon" alt="" width="20" height="20" src="${DEFAULT_KB_ICON_URL}" /><span class="kb-card-name">${esc(String(j.kb_name || ""))}</span></h3>
+                  <p class="desc task-card-status-line" role="status"><span class="task-card-op">${esc(opText)}</span><span class="task-card-sep" aria-hidden="true"> · </span><span class="task-card-state">${esc(stateText)}</span></p>
+                  ${runningCorner}
+                </article>`;
+    })
+    .join("");
+}
+
+function bindTaskGridNavigation() {
+  appEl.querySelectorAll("[data-task-job]").forEach((card) => {
+    card.addEventListener("click", () => {
+      const id = card.getAttribute("data-task-job");
+      if (id) go(`/tasks/${encodeURIComponent(id)}`);
+    });
+  });
+}
+
 function bindKbGridNavigation(user) {
   appEl.querySelectorAll(".kb-card").forEach((card) => {
     card.addEventListener("click", () => {
+      if (card.hasAttribute("data-task-job")) return;
       const name = card.getAttribute("data-kb");
       const mode = card.getAttribute("data-card-mode");
       if (!name) return;
@@ -759,14 +866,13 @@ function renderKbLockToggle(isPublic) {
 function renderKbLockFieldNew() {
   const openT = T("kbLockOpenTitle");
   const closedT = T("kbLockClosedTitle");
-  return `<label class="kb-lock-field">
-    <span>${esc(T("kbVisibility"))}</span>
+  return `<div class="kb-lock-field">
     <div class="kb-lock-choice" id="kb-vis-new" role="radiogroup" aria-label="${esc(T("kbVisibility"))}">
       <button type="button" class="kb-lock-opt is-active" data-vis="private" aria-pressed="true" title="${esc(closedT)}">${KB_LOCK}</button>
       <button type="button" class="kb-lock-opt" data-vis="public" aria-pressed="false" title="${esc(openT)}">${KB_UNLOCK}</button>
     </div>
     <input type="hidden" id="kb-visibility-new" value="private" />
-  </label>`;
+  </div>`;
 }
 
 function wireKbLockChoiceNewForm() {
@@ -790,6 +896,7 @@ function renderShellSidebar(active) {
   const plazaCl = active === "plaza" ? " active" : "";
   const myCl = active === "my" ? " active" : "";
   const addCl = active === "add" ? " active" : "";
+  const tasksCl = active === "tasks" ? " active" : "";
   const profCl = active === "profile" ? " active" : "";
   return `
     <aside class="sidebar" aria-label="${esc(T("navSection"))}">
@@ -797,22 +904,27 @@ function renderShellSidebar(active) {
       <button type="button" class="nav-item${plazaCl}" data-nav="plaza">${esc(T("navKbPlaza"))}</button>
       <button type="button" class="nav-item${myCl}" data-nav="my">${esc(T("navMyKb"))}</button>
       <button type="button" class="nav-item${addCl}" data-nav="add">${esc(T("navAddKb"))}</button>
+      <button type="button" class="nav-item${tasksCl}" data-nav="tasks">${esc(T("navTasks"))}</button>
       <button type="button" class="nav-item${profCl}" data-nav="profile">${esc(T("navAccount"))}</button>
       <div class="sidebar-spacer" aria-hidden="true"></div>
       <button type="button" class="nav-item nav-item--logout" id="sidebar-logout-btn">${esc(T("logout"))}</button>
     </aside>`;
 }
 
-function renderInterfaceLangSelect(selectId) {
+function renderInterfaceLangSelect(selectId, omitOuterLabel = false) {
   const enSel = currentLang === "en" ? " selected" : "";
   const zhSel = currentLang === "zh" ? " selected" : "";
+  const sel = `<select id="${esc(selectId)}" class="lang-select" aria-label="${esc(T("interfaceLanguage"))}">
+        <option value="en"${enSel}>English</option>
+        <option value="zh"${zhSel}>中文</option>
+      </select>`;
+  if (omitOuterLabel) {
+    return `<div class="lang-select-wrap lang-select-wrap--bare">${sel}</div>`;
+  }
   return `
     <label class="lang-select-wrap">
       <span class="lang-select-label">${esc(T("interfaceLanguage"))}</span>
-      <select id="${esc(selectId)}" class="lang-select" aria-label="${esc(T("interfaceLanguage"))}">
-        <option value="en"${enSel}>English</option>
-        <option value="zh"${zhSel}>中文</option>
-      </select>
+      ${sel}
     </label>`;
 }
 
@@ -871,6 +983,7 @@ function bindShellChrome(user) {
       if (n === "plaza") go("/");
       if (n === "my") go("/my-kb");
       if (n === "add") go("/add-kb");
+      if (n === "tasks") go("/tasks");
       if (n === "profile") go("/profile");
     });
   });
@@ -910,35 +1023,28 @@ function bindUploadForm() {
     submitBtn.textContent = T("building");
     try {
       const is_public = document.getElementById("kb-visibility-new")?.value === "public";
-      const iconFile = document.getElementById("kb-icon-new-file")?.files?.[0] || null;
       const start = await fetchJSON("/api/indexes/build", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description, readme_md: readmeMd, upload_id: stagedUploadId, is_public }),
+        body: JSON.stringify({
+          name,
+          description,
+          readme_md: readmeMd,
+          upload_id: stagedUploadId,
+          is_public,
+        }),
       });
-      const done = await pollJob(start.job_id);
-      const builtName = done.result?.name || name;
-      if (iconFile) {
-        const fd = new FormData();
-        fd.append("file", iconFile);
-        await fetchJSON(`/api/kb/${encodeURIComponent(builtName)}/icon`, {
-          method: "POST",
-          body: fd,
-        });
-      }
-      setStatus(T("buildDone", done.result?.name || name));
+      const jid = start.job_id;
       stagedUploadId = null;
       archiveInput.value = "";
       pickedFileNameEl.textContent = T("noFileChosen");
-      document.getElementById("upload-progress").value = 0;
-      document.getElementById("upload-progress-text").textContent = "0%";
-      document.getElementById("kb-name").value = "";
-      document.getElementById("kb-description").value = "";
-      document.getElementById("kb-readme").value = "";
-      document.getElementById("build-progress").value = 0;
-      document.getElementById("build-progress-text").textContent = T("buildIdle");
+      const u = document.getElementById("upload-progress");
+      const ut = document.getElementById("upload-progress-text");
+      if (u) u.value = 0;
+      if (ut) ut.textContent = "0%";
       saveState();
-      go("/");
+      setStatus(T("taskEnqueued"));
+      go(`/tasks/${encodeURIComponent(jid)}`);
     } catch (err) {
       setStatus(err.message, true);
     } finally {
@@ -946,12 +1052,6 @@ function bindUploadForm() {
       submitBtn.textContent = T("startBuild");
     }
   });
-
-  if (currentJobId) {
-    pollJob(currentJobId)
-      .then(() => render())
-      .catch((err) => setStatus(err.message, true));
-  }
 }
 
 async function renderLogin(register) {
@@ -1179,22 +1279,31 @@ async function renderAddKb(user) {
       <div class="shell-main">
         <div class="shell-content">
           ${renderTopbar(user, { title: T("newKb"), subtitle: T("addKbSubtitle") })}
-          <div class="shell-body add-kb-page">
-            <section class="card">
-              <form id="upload-form">
-                <label><span>${esc(T("indexName"))}</span><input id="kb-name" required /></label>
-                <label><span>${esc(T("indexDescription"))}</span><textarea id="kb-description" rows="3" required></textarea></label>
-                <label>
-                  <span>${esc(T("indexReadme"))}</span>
+          <div class="shell-body add-kb-page profile-panel kb-detail-shell page-frame page-frame--wide">
+            <div class="page-frame__inner">
+              <form id="upload-form" class="kb-detail-flow">
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("indexName"))}</h2>
+                  <input id="kb-name" required aria-label="${esc(T("indexName"))}" />
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("indexDescription"))}</h2>
+                  <textarea id="kb-description" class="kb-detail-textarea" rows="3" required aria-label="${esc(T("indexDescription"))}"></textarea>
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("indexReadme"))}</h2>
                   <div class="md-toggle-row">
                     <button type="button" class="secondary small" id="readme-add-edit-tab">${esc(T("readmeEdit"))}</button>
                     <button type="button" class="secondary small" id="readme-add-preview-tab">${esc(T("readmePreview"))}</button>
                   </div>
-                  <textarea id="kb-readme" rows="8"></textarea>
+                  <textarea id="kb-readme" class="kb-detail-textarea" rows="8" aria-label="${esc(T("indexReadme"))}"></textarea>
                   <div id="kb-readme-add-preview" class="md-preview" style="display:none"></div>
-                </label>
-                <label>
-                  <span>${esc(T("kbIcon"))}</span>
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("kbIcon"))}</h2>
                   <input type="file" id="kb-icon-new-file" class="hidden-file-input" accept="image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp" />
                   <div class="kb-icon-manage-row">
                     <img id="kb-icon-add-preview" class="kb-manage-icon-preview" src="${DEFAULT_KB_ICON_URL}" alt="" />
@@ -1202,32 +1311,34 @@ async function renderAddKb(user) {
                   <div class="file-picker-row">
                     <button type="button" class="secondary" id="pick-kb-icon-btn">${esc(T("uploadKbIcon"))}</button>
                   </div>
-                </label>
-                ${renderKbLockFieldNew()}
-                <label>
-                  <span>${esc(T("archiveLabel"))}</span>
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("kbVisibility"))}</h2>
+                  ${renderKbLockFieldNew()}
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("archiveLabel"))}</h2>
                   <input type="file" id="kb-archive" class="hidden-file-input" accept=".tar,.tgz,.tar.gz,.tar.bz2,.tar.xz,application/x-tar" />
                   <div class="file-picker-row">
                     <button type="button" class="secondary" id="pick-archive-btn">${esc(T("chooseFile"))}</button>
                     <span id="picked-file-name">${esc(T("noFileChosen"))}</span>
                   </div>
-                </label>
-                <div class="progress-group">
-                  <label class="progress-label"><span>${esc(T("uploadProgress"))}</span></label>
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("uploadProgress"))}</h2>
                   <progress id="upload-progress" value="0" max="100"></progress>
-                  <span id="upload-progress-text">0%</span>
+                  <span id="upload-progress-text" class="muted small" style="display:inline-block;margin-top:8px">0%</span>
                 </div>
-                <div class="progress-group">
-                  <label class="progress-label"><span>${esc(T("buildProgress"))}</span></label>
-                  <progress id="build-progress" value="0" max="100"></progress>
-                  <span id="build-progress-text">${esc(T("buildIdle"))}</span>
-                </div>
-                <div class="form-actions">
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block kb-detail-actions">
                   <button type="button" class="secondary" id="cancel-add-kb">${esc(T("back"))}</button>
                   <button type="submit" id="submit-btn">${esc(T("startBuild"))}</button>
                 </div>
               </form>
-            </section>
+            </div>
           </div>
         </div>
       </div>
@@ -1353,31 +1464,42 @@ async function renderProfile(user) {
       <div class="shell-main">
         <div class="shell-content">
           ${renderTopbar(user, { title: T("accountTitle"), subtitle: T("accountSubtitle") })}
-          <div class="shell-body profile-panel">
-            <section class="card">
-              <h2 class="profile-section-title">${esc(T("navAccount"))}</h2>
-              <div class="profile-avatar-row">
-                <img id="profile-avatar-preview" class="profile-avatar-preview" src="${DEFAULT_AVATAR_URL}" alt="" />
-                <div class="profile-avatar-actions">
-                  <p class="profile-username-line">${esc(user?.username || "")}</p>
-                  <p class="muted small">${esc(T("avatarHint"))}</p>
-                  <input type="file" id="profile-avatar-file" class="hidden-file-input" accept="image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp" />
-                  <button type="button" id="profile-avatar-upload-btn" style="margin-top:10px">${esc(T("changeAvatarBtn"))}</button>
-                  <button type="button" class="secondary" id="profile-change-password" style="margin-top:12px;display:block">${esc(T("changePasswordNav"))}</button>
-                  <p id="profile-msg" class="small muted" style="margin-top:8px"></p>
+          <div class="shell-body profile-panel kb-detail-shell page-frame page-frame--wide">
+            <div class="page-frame__inner">
+              <div class="kb-detail-flow">
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("navAccount"))}</h2>
+                  <div class="profile-avatar-row">
+                    <img id="profile-avatar-preview" class="profile-avatar-preview" src="${DEFAULT_AVATAR_URL}" alt="" />
+                    <div class="profile-avatar-actions">
+                      <p class="profile-username-line">${esc(user?.username || "")}</p>
+                      <p class="muted small">${esc(T("avatarHint"))}</p>
+                      <input type="file" id="profile-avatar-file" class="hidden-file-input" accept="image/png,image/jpeg,image/gif,image/webp,.png,.jpg,.jpeg,.gif,.webp" />
+                      <div class="profile-actions-stack">
+                        <button type="button" id="profile-avatar-upload-btn">${esc(T("changeAvatarBtn"))}</button>
+                        <button type="button" class="secondary" id="profile-change-password">${esc(T("changePasswordNav"))}</button>
+                      </div>
+                      <p id="profile-msg" class="small muted profile-msg-line"></p>
+                    </div>
+                  </div>
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("interfaceLanguage"))}</h2>
+                  ${renderInterfaceLangSelect("profile-lang-select", true)}
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("apiKeysTitle"))}</h2>
+                  <p class="muted small profile-apikey-hint">${esc(T("apiKeyMaxHint"))}</p>
+                  <div id="api-key-list-wrap">${renderApiKeyList(apiKeys)}</div>
+                  <div class="api-key-create">
+                    <label><span>${esc(T("apiKeyName"))}</span><input id="api-key-name" /></label>
+                    <button type="button" id="api-key-create-btn">${esc(T("apiKeyCreate"))}</button>
+                  </div>
                 </div>
               </div>
-              <hr class="hr-soft" />
-              ${renderInterfaceLangSelect("profile-lang-select")}
-              <hr class="hr-soft" />
-              <h2 class="profile-section-title">${esc(T("apiKeysTitle"))}</h2>
-              <p class="muted small">${esc(T("apiKeyMaxHint"))}</p>
-              <div id="api-key-list-wrap">${renderApiKeyList(apiKeys)}</div>
-              <div class="api-key-create">
-                <label><span>${esc(T("apiKeyName"))}</span><input id="api-key-name" /></label>
-                <button type="button" id="api-key-create-btn">${esc(T("apiKeyCreate"))}</button>
-              </div>
-            </section>
+            </div>
           </div>
         </div>
       </div>
@@ -1590,6 +1712,65 @@ function startUpload(file) {
   xhr.send(fd);
 }
 
+function resetKbManageCorpusProgress() {
+  const u = document.getElementById("kb-manage-corpus-upload-progress");
+  const ut = document.getElementById("kb-manage-corpus-upload-text");
+  if (u) u.value = 0;
+  if (ut) ut.textContent = "0%";
+}
+
+function startManageCorpusUpload(file, kbName) {
+  if (uploadXhr) uploadXhr.abort();
+  manageCorpusUploadId = null;
+  const uploadProgressEl = document.getElementById("kb-manage-corpus-upload-progress");
+  const uploadProgressTextEl = document.getElementById("kb-manage-corpus-upload-text");
+  if (uploadProgressEl) uploadProgressEl.value = 0;
+  if (uploadProgressTextEl) uploadProgressTextEl.textContent = "0%";
+  setStatus(T("uploadStart"));
+
+  const fd = new FormData();
+  fd.append("file", file);
+  const xhr = new XMLHttpRequest();
+  uploadXhr = xhr;
+  xhr.open("POST", "/api/upload");
+  xhr.setRequestHeader("Authorization", authHeaders().Authorization || "");
+  xhr.upload.onprogress = (evt) => {
+    if (!evt.lengthComputable || !uploadProgressEl || !uploadProgressTextEl) return;
+    const p = Math.min(100, Math.round((evt.loaded / evt.total) * 100));
+    uploadProgressEl.value = p;
+    uploadProgressTextEl.textContent = `${p}%`;
+  };
+  xhr.onload = () => {
+    uploadXhr = null;
+    let data = {};
+    try {
+      data = JSON.parse(xhr.responseText || "{}");
+    } catch {
+      setStatus(T("uploadFailed"), true);
+      return;
+    }
+    if (xhr.status >= 200 && xhr.status < 300 && data.ok && data.upload_id) {
+      manageCorpusUploadId = data.upload_id;
+      manageCorpusKbFor = kbName;
+      if (uploadProgressEl) uploadProgressEl.value = 100;
+      if (uploadProgressTextEl) uploadProgressTextEl.textContent = "100%";
+      setStatus(T("uploadStagedManage"));
+      return;
+    }
+    if (xhr.status === 401) {
+      setToken("");
+      go("/login");
+      return;
+    }
+    setStatus(data.error || T("uploadFailed"), true);
+  };
+  xhr.onerror = () => {
+    uploadXhr = null;
+    setStatus(T("uploadFailed"), true);
+  };
+  xhr.send(fd);
+}
+
 function renderKbDetailTopbar(user, { name, subtitle = "" }) {
   return `
     <header class="topbar topbar--detail">
@@ -1619,10 +1800,12 @@ async function renderKbPublicDetail(user, name) {
         <div class="shell-main">
           <div class="shell-content">
             ${renderTopbar(user, { title: T("navKbPlaza"), subtitle: "" })}
-            <div class="shell-body">
-              <div class="narrow-card card">
-                <p class="error">${currentLang === "zh" ? "无法加载知识库" : "Knowledge base not found."}</p>
-                <button type="button" class="secondary" id="back-miss">${esc(T("backToPlaza"))}</button>
+            <div class="shell-body page-frame">
+              <div class="page-frame__inner page-frame__inner--narrow">
+                <div class="page-stack__section">
+                  <p class="error" style="margin:0 0 16px">${currentLang === "zh" ? "无法加载知识库" : "Knowledge base not found."}</p>
+                  <button type="button" class="secondary" id="back-miss">${esc(T("backToPlaza"))}</button>
+                </div>
               </div>
             </div>
           </div>
@@ -1653,8 +1836,9 @@ async function renderKbPublicDetail(user, name) {
       <div class="shell-main">
         <div class="shell-content">
           ${renderKbDetailTopbar(user, { name, subtitle: T("kbDetailFixedSubtitle") })}
-          <div class="shell-body profile-panel kb-detail-shell">
-            <section class="card kb-detail-card">
+          <div class="shell-body profile-panel kb-detail-shell page-frame page-frame--wide">
+            <div class="page-frame__inner">
+            <div class="kb-detail-flow">
               <div class="kb-detail-block">
                 <h2 class="kb-detail-block-title">${esc(T("indexDescription"))}</h2>
                 <p class="kb-detail-desc-text${meta.description ? "" : " muted"}">${meta.description ? esc(meta.description) : currentLang === "zh" ? "暂无描述" : "No description."}</p>
@@ -1680,7 +1864,8 @@ async function renderKbPublicDetail(user, name) {
               <div class="kb-detail-block kb-detail-actions">
                 ${actions || `<p class="muted small">—</p>`}
               </div>
-            </section>
+            </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1727,10 +1912,12 @@ async function renderKbManage(user, name) {
         <div class="shell-main">
           <div class="shell-content">
             ${renderTopbar(user, { title: T("navKbPlaza"), subtitle: "" })}
-            <div class="shell-body">
-              <div class="narrow-card card">
-                <p class="error">${currentLang === "zh" ? "无法加载知识库" : "Knowledge base not found."}</p>
-                <button type="button" class="secondary" id="back-miss">${esc(T("backToPlaza"))}</button>
+            <div class="shell-body page-frame">
+              <div class="page-frame__inner page-frame__inner--narrow">
+                <div class="page-stack__section">
+                  <p class="error" style="margin:0 0 16px">${currentLang === "zh" ? "无法加载知识库" : "Knowledge base not found."}</p>
+                  <button type="button" class="secondary" id="back-miss">${esc(T("backToPlaza"))}</button>
+                </div>
               </div>
             </div>
           </div>
@@ -1748,6 +1935,10 @@ async function renderKbManage(user, name) {
   const canDelete = !!perm.can_delete;
   const legacy = !!meta?.legacy_registry_only;
   const isPub = !!meta?.is_public;
+
+  if (manageCorpusUploadId && manageCorpusKbFor && manageCorpusKbFor !== name) {
+    manageCorpusUploadId = null;
+  }
 
   let members = null;
   if (!legacy && !isPub) {
@@ -1833,14 +2024,32 @@ async function renderKbManage(user, name) {
           ${isOwner && members?.ok ? renderAddMemberForm() : ""}
         </div>`;
 
+  const corpusUpdateSection =
+    isOwner && !legacy
+      ? `<div class="kb-detail-block">
+          <h2 class="kb-detail-block-title">${esc(T("kbUpdateCorpusTitle"))}</h2>
+          <div class="archive-row manage-archive-row">
+            <input type="file" id="kb-manage-archive" class="hidden-file-input" accept=".tar,.tgz,.tar.gz,.tar.bz2,.tar.xz,application/x-tar" />
+            <button type="button" class="secondary" id="kb-manage-pick-archive">${esc(T("chooseFile"))}</button>
+            <span class="picked-file muted small" id="kb-manage-picked-file-name">${esc(T("noFileChosen"))}</span>
+          </div>
+          <label class="progress-label"><span>${esc(T("uploadProgress"))}</span></label>
+          <progress id="kb-manage-corpus-upload-progress" value="0" max="100"></progress>
+          <span id="kb-manage-corpus-upload-text">0%</span>
+          <p class="muted small">${esc(T("taskEnqueuedHint"))}</p>
+          <p class="form-actions" style="margin-top:0.75rem"><button type="button" id="kb-manage-rebuild-btn">${esc(T("updateCorpusRebuild"))}</button></p>
+        </div>`
+      : "";
+
   appEl.innerHTML = `
     <div class="app-shell">
       ${renderShellSidebar(null)}
       <div class="shell-main">
         <div class="shell-content">
           ${renderKbDetailTopbar(user, { name, subtitle: T("kbManageFixedSubtitle") })}
-          <div class="shell-body profile-panel kb-detail-shell">
-            <section class="card kb-detail-card">
+          <div class="shell-body profile-panel kb-detail-shell page-frame page-frame--wide">
+            <div class="page-frame__inner">
+            <div class="kb-detail-flow">
                 ${nameSection ? `${nameSection}<hr class="hr-soft hr-soft--kb-detail" />` : ""}
                 ${iconSection}
                 ${iconSection ? `<hr class="hr-soft hr-soft--kb-detail" />` : ""}
@@ -1850,6 +2059,7 @@ async function renderKbManage(user, name) {
                 <hr class="hr-soft hr-soft--kb-detail" />
                 ${readmeSection}
                 ${membersSection ? `<hr class="hr-soft hr-soft--kb-detail" />${membersSection}` : ""}
+                ${corpusUpdateSection ? `<hr class="hr-soft hr-soft--kb-detail" />${corpusUpdateSection}` : ""}
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
                   <h2 class="kb-detail-block-title">${esc(T("search"))}</h2>
@@ -1860,7 +2070,8 @@ async function renderKbManage(user, name) {
                   <pre id="search-out" class="search-out">${esc(T("noResults"))}</pre>
                 </div>
                 ${canDelete ? `<hr class="hr-soft hr-soft--kb-detail" /><div class="kb-detail-block kb-detail-block--danger"><button type="button" class="danger" id="del-kb-btn">${esc(T("deleteKb"))}</button></div>` : ""}
-            </section>
+            </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1870,6 +2081,75 @@ async function renderKbManage(user, name) {
   bindShellChrome(user);
   void refreshTopbarAvatar(user);
   void ensureKbIconOnImg(document.getElementById("kb-icon-edit-preview"), name);
+
+  if (corpusUpdateSection) {
+    const pickedEl = document.getElementById("kb-manage-picked-file-name");
+    if (manageCorpusUploadId && manageCorpusKbFor === name) {
+      if (pickedEl) pickedEl.textContent = T("kbManageCorpusStaged");
+      const u = document.getElementById("kb-manage-corpus-upload-progress");
+      const ut = document.getElementById("kb-manage-corpus-upload-text");
+      if (u) u.value = 100;
+      if (ut) ut.textContent = "100%";
+    } else {
+      resetKbManageCorpusProgress();
+    }
+    document.getElementById("kb-manage-pick-archive")?.addEventListener("click", () => {
+      document.getElementById("kb-manage-archive")?.click();
+    });
+    const archiveInput = document.getElementById("kb-manage-archive");
+    archiveInput?.addEventListener("change", () => {
+      const f = archiveInput.files?.[0] || null;
+      if (pickedEl) pickedEl.textContent = f?.name || T("noFileChosen");
+      if (f) startManageCorpusUpload(f, name);
+      else {
+        if (uploadXhr) uploadXhr.abort();
+        manageCorpusUploadId = null;
+        manageCorpusKbFor = null;
+        resetKbManageCorpusProgress();
+        if (pickedEl) pickedEl.textContent = T("noFileChosen");
+      }
+    });
+    document.getElementById("kb-manage-rebuild-btn")?.addEventListener("click", async () => {
+      if (!manageCorpusUploadId || manageCorpusKbFor !== name) {
+        setStatus(T("requireStagedManage"), true);
+        return;
+      }
+      const description =
+        (document.getElementById("kb-desc-edit")?.value ?? "").trim() || String(meta.description || "").trim();
+      if (!description) {
+        setStatus(T("requireDescriptionForRebuild"), true);
+        return;
+      }
+      const readmeMd = document.getElementById("kb-readme-edit")?.value ?? String(meta.readme_md || "");
+      const btn = document.getElementById("kb-manage-rebuild-btn");
+      btn.disabled = true;
+      try {
+        const start = await fetchJSON("/api/indexes/build", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name,
+            description,
+            readme_md: String(readmeMd).trim(),
+            upload_id: manageCorpusUploadId,
+            is_public: !!meta.is_public,
+            icon: String(meta.icon || "book"),
+          }),
+        });
+        manageCorpusUploadId = null;
+        manageCorpusKbFor = null;
+        archiveInput.value = "";
+        if (pickedEl) pickedEl.textContent = T("noFileChosen");
+        resetKbManageCorpusProgress();
+        setStatus(T("taskEnqueued"));
+        go(`/tasks/${encodeURIComponent(start.job_id)}`);
+      } catch (err) {
+        setStatus(err.message, true);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
 
   const runSearch = async () => {
     const q = document.getElementById("search-q").value.trim();
@@ -2081,6 +2361,245 @@ function bindMemberEvents(kbName, isOwner) {
   });
 }
 
+async function renderTasksList(user) {
+  let jobs = [];
+  try {
+    const data = await fetchJSON("/api/jobs");
+    jobs = data.jobs || [];
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+
+  const renderTasksGrid = (query) => {
+    const q = String(query || "").trim().toLowerCase();
+    const rows = !q
+      ? jobs
+      : jobs.filter((j) => {
+          const n = String(j.kb_name || "").toLowerCase();
+          const st = String(j.status || "").toLowerCase();
+          const ph = String(j.phase || "").toLowerCase();
+          if (n.includes(q) || st.includes(q) || ph.includes(q)) return true;
+          if (currentLang === "zh") {
+            if (q.includes("排队") && st === "queued") return true;
+            if ((q.includes("运行") || q.includes("进行")) && st === "running") return true;
+            if (q.includes("创建") && String(j.op) !== "update") return true;
+            if (q.includes("更新") && String(j.op) === "update") return true;
+          }
+          return false;
+        });
+    return rows.length === 0
+      ? `<p class="muted empty-hint">${currentLang === "zh" ? "没有匹配结果" : "No matches found."}</p>`
+      : renderTaskCardsInnerHtml(rows);
+  };
+
+  appEl.innerHTML = `
+    <div class="app-shell">
+      ${renderShellSidebar("tasks")}
+      <div class="shell-main">
+        <div class="shell-content">
+          ${renderTopbar(user, { title: T("tasksTitle"), subtitle: T("tasksSubtitle") })}
+          <div class="shell-body">
+            <label class="kb-list-search">
+              <span>${esc(T("kbListSearch"))}</span>
+              <input id="tasks-search-input" placeholder="${esc(T("tasksSearchPlaceholder"))}" />
+            </label>
+            <div class="kb-grid" id="task-grid">
+              ${jobs.length === 0 ? `<p class="muted empty-hint">${esc(T("tasksEmpty"))}</p>` : renderTasksGrid("")}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  bindShellChrome(user);
+  void refreshTopbarAvatar(user);
+  bindTaskGridNavigation();
+  document.getElementById("tasks-search-input")?.addEventListener("input", (e) => {
+    const grid = document.getElementById("task-grid");
+    if (!grid) return;
+    grid.innerHTML = renderTasksGrid(e.target.value);
+    bindTaskGridNavigation();
+  });
+}
+
+async function renderTaskDetail(user, jobId) {
+  const jidEnc = encodeURIComponent(jobId);
+  let headTitle = T("taskDetailTitle");
+  let headSub = jobId;
+  try {
+    const jPeek = await fetchJSON(`/api/jobs/${jidEnc}`);
+    if (jPeek?.kb_name) headTitle = String(jPeek.kb_name);
+  } catch (e) {
+    if (isJobGoneError(e)) {
+      setStatus(T("taskNotFoundOrDone"));
+      go("/tasks");
+      return;
+    }
+    /* network/other: continue with default title */
+  }
+
+  appEl.innerHTML = `
+    <div class="app-shell">
+      ${renderShellSidebar("tasks")}
+      <div class="shell-main">
+        <div class="shell-content">
+          ${renderKbDetailTopbar(user, { name: headTitle, subtitle: headSub })}
+          <div class="shell-body profile-panel kb-detail-shell page-frame page-frame--wide">
+            <div class="page-frame__inner">
+            <div class="kb-detail-flow">
+              <div class="kb-detail-block">
+                <h2 class="kb-detail-block-title">${esc(T("taskStatusTitle"))}</h2>
+                <p class="kb-detail-desc-text" id="task-status-line">…</p>
+              </div>
+              <hr class="hr-soft hr-soft--kb-detail" />
+              <div class="kb-detail-block">
+                <h2 class="kb-detail-block-title">${esc(T("taskProgressTitle"))}</h2>
+                <label class="progress-label"><span>${esc(T("buildProgress"))}</span></label>
+                <progress id="task-detail-progress" value="0" max="100"></progress>
+                <p id="task-detail-detail" class="muted small kb-detail-detail-line"></p>
+              </div>
+              <hr class="hr-soft hr-soft--kb-detail" />
+              <div class="kb-detail-block" id="task-error-block" hidden>
+                <p id="task-detail-error" class="error small"></p>
+              </div>
+              <hr class="hr-soft hr-soft--kb-detail" id="task-error-hr" hidden />
+              <div class="kb-detail-block kb-detail-actions">
+                <button type="button" class="secondary" id="task-back-btn">${esc(T("taskBackToList"))}</button>
+                <button type="button" class="danger" id="task-cancel-btn">${esc(T("taskCancel"))}</button>
+              </div>
+            </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  bindShellChrome(user);
+  void refreshTopbarAvatar(user);
+  const prog = document.getElementById("task-detail-progress");
+  const line = document.getElementById("task-status-line");
+  const det = document.getElementById("task-detail-detail");
+  const errEl = document.getElementById("task-detail-error");
+  const errBlock = document.getElementById("task-error-block");
+  const errHr = document.getElementById("task-error-hr");
+  const backBtn = document.getElementById("task-back-btn");
+  const cancelBtn = document.getElementById("task-cancel-btn");
+  const topbarName = document.querySelector(".topbar--detail .topbar-text h1");
+  let lastJobSig = "";
+  let buildDoneToastShown = false;
+  let lastKbName = "";
+
+  const refresh = (j) => {
+    if (!j) return;
+    if (j.kb_name) lastKbName = String(j.kb_name);
+    const sig = `${j.status}|${j.phase}|${j.percent}|${j.detail || ""}|${j.error || ""}`;
+    if (sig === lastJobSig) return;
+    lastJobSig = sig;
+    if (prog) prog.value = Number(j.percent || 0);
+    const opLabel = j.op === "update" ? T("taskOpUpdate") : T("taskOpCreate");
+    if (topbarName && j.kb_name) topbarName.textContent = String(j.kb_name);
+    if (line) {
+      line.textContent = `${opLabel} · ${j.status} · ${phaseText(j.phase)} · ${j.percent || 0}%`;
+    }
+    if (det) det.textContent = j.detail || "";
+    const done = ["done", "error", "cancelled"].includes(String(j.status));
+    if (cancelBtn) cancelBtn.style.display = done ? "none" : "";
+    const isErr = String(j.status) === "error";
+    if (errEl && errBlock && errHr) {
+      if (isErr && j.error) {
+        errBlock.hidden = false;
+        errHr.hidden = false;
+        errEl.textContent = j.error;
+      } else {
+        errBlock.hidden = true;
+        errHr.hidden = true;
+        errEl.textContent = "";
+      }
+    }
+    if (String(j.status) === "done" && !buildDoneToastShown) {
+      buildDoneToastShown = true;
+      setStatus(T("buildDone", j.result?.name || j.kb_name || ""));
+    }
+  };
+
+  const leaveTaskDetailToList = (j) => {
+    const st = String(j?.status || "");
+    if (st === "error" && j?.error) setStatus(String(j.error), true);
+    else if (st === "cancelled") setStatus(T("taskCancelledRemoved"));
+    go("/tasks");
+  };
+
+  backBtn?.addEventListener("click", () => go("/tasks"));
+
+  cancelBtn?.addEventListener("click", async () => {
+    if (!(await showConfirmDialog(T("taskCancelConfirm")))) return;
+    try {
+      await fetchJSON(`/api/jobs/${jidEnc}/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      try {
+        const j = await fetchJSON(`/api/jobs/${jidEnc}`);
+        refresh(j);
+        if (String(j.status) === "cancelled") {
+          setStatus(T("taskCancelledRemoved"));
+          go("/tasks");
+          return;
+        }
+      } catch {
+        setStatus(T("taskCancelledRemoved"));
+        go("/tasks");
+      }
+    } catch (e) {
+      setStatus(e.message, true);
+    }
+  });
+
+  try {
+    let j0 = await fetchJSON(`/api/jobs/${jidEnc}`);
+    refresh(j0);
+    if (["done", "error", "cancelled"].includes(String(j0.status))) {
+      leaveTaskDetailToList(j0);
+      return;
+    }
+    try {
+      const ended = await pollJobUntilTerminal(jobId, refresh);
+      if (ended._jobRemoved) {
+        if (!buildDoneToastShown) {
+          buildDoneToastShown = true;
+          const n = lastKbName || ended.result?.name || "";
+          if (n) setStatus(T("buildDone", n));
+          else setStatus(T("taskJobRemovedAfterDone"));
+        }
+        go("/tasks");
+        return;
+      }
+      refresh(ended);
+      if (["done", "error", "cancelled"].includes(String(ended.status))) {
+        leaveTaskDetailToList(ended);
+      }
+    } catch (e) {
+      if (isJobGoneError(e)) {
+        setStatus(T("taskNotFoundOrDone"));
+        go("/tasks");
+        return;
+      }
+      throw e;
+    }
+  } catch (e) {
+    if (isJobGoneError(e)) {
+      setStatus(T("taskNotFoundOrDone"));
+      go("/tasks");
+      return;
+    }
+    if (errBlock && errHr && errEl) {
+      errBlock.hidden = false;
+      errHr.hidden = false;
+      errEl.textContent = e.message;
+    }
+    if (cancelBtn) cancelBtn.style.display = "none";
+  }
+}
+
 async function render() {
   const route = parseRoute();
   document.documentElement.lang = currentLang === "zh" ? "zh-CN" : "en";
@@ -2141,6 +2660,16 @@ async function render() {
     return;
   }
 
+  if (route.type === "tasks") {
+    await renderTasksList(user);
+    return;
+  }
+
+  if (route.type === "taskDetail") {
+    await renderTaskDetail(user, route.jobId);
+    return;
+  }
+
   if (route.type === "profile") {
     await renderProfile(user);
     return;
@@ -2166,6 +2695,5 @@ try {
   /* ignore */
 }
 if (restored?.stagedUploadId) stagedUploadId = restored.stagedUploadId;
-if (restored?.currentJobId) currentJobId = restored.currentJobId;
 
 render().catch((e) => setStatus(e.message, true));

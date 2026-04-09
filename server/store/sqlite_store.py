@@ -1,10 +1,12 @@
 """SQLite implementation of ``AppStore`` (users, sessions, KBs, members)."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from server.passwords import verify_password
 from server.store.protocol import KBPermission, KBRecord, UserRecord
@@ -42,7 +44,8 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     db_path TEXT NOT NULL,
     owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at REAL NOT NULL,
-    icon TEXT NOT NULL DEFAULT 'book'
+    icon TEXT NOT NULL DEFAULT 'book',
+    kb_ready INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS kb_members (
@@ -138,6 +141,52 @@ class SqliteAppStore:
                 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
                 """
             )
+        bj = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='build_jobs'"
+        ).fetchone()
+        if bj is None:
+            self._conn.executescript(
+                """
+                CREATE TABLE build_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    task_kind TEXT NOT NULL,
+                    op TEXT NOT NULL,
+                    kb_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL,
+                    started_at REAL,
+                    finished_at REAL,
+                    percent INTEGER NOT NULL DEFAULT 0,
+                    phase TEXT NOT NULL DEFAULT 'queued',
+                    detail TEXT NOT NULL DEFAULT '',
+                    error TEXT,
+                    result_json TEXT,
+                    upload_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                );
+                CREATE INDEX idx_build_jobs_user_created ON build_jobs(user_id, created_at DESC);
+                CREATE INDEX idx_build_jobs_status_created ON build_jobs(status, created_at ASC);
+                """
+            )
+        if "kb_ready" not in kb_cols:
+            self._conn.execute(
+                "ALTER TABLE knowledge_bases ADD COLUMN kb_ready INTEGER NOT NULL DEFAULT 1"
+            )
+        self._conn.execute(
+            "UPDATE build_jobs SET status = 'queued', started_at = NULL "
+            "WHERE status = 'running'"
+        )
+        self._conn.execute(
+            "DELETE FROM build_jobs WHERE status IN ('done', 'error', 'cancelled')"
+        )
+
+    def _kb_ready_from_row(self, kb: sqlite3.Row) -> bool:
+        try:
+            return int(kb["kb_ready"] or 0) == 1
+        except (KeyError, IndexError, TypeError, ValueError):
+            return True
 
     def _avatar_dir(self) -> Path:
         d = self._path.parent / "avatars"
@@ -454,6 +503,8 @@ class SqliteAppStore:
             kb = self._kb_row_by_name(name)
             if kb is None:
                 return None
+            if not self._kb_ready_from_row(kb):
+                return None
             perm = KBPermission(can_read=True, can_write=True, can_delete=True, is_owner=True)
             return self._row_to_record(kb, perm)
 
@@ -461,6 +512,8 @@ class SqliteAppStore:
         with self._lock:
             kb = self._kb_row_by_name(name)
             if kb is None:
+                return None
+            if not self._kb_ready_from_row(kb):
                 return None
             return str(kb["db_path"])
 
@@ -479,6 +532,8 @@ class SqliteAppStore:
             kb = self._kb_row_by_name(name)
             if kb is None:
                 return False
+            if not self._kb_ready_from_row(kb):
+                return False
             self._conn.execute(
                 "UPDATE knowledge_bases SET description = ? WHERE id = ?",
                 (desc, int(kb["id"])),
@@ -491,6 +546,8 @@ class SqliteAppStore:
         with self._lock:
             kb = self._kb_row_by_name(name)
             if kb is None:
+                return False
+            if not self._kb_ready_from_row(kb):
                 return False
             self._conn.execute(
                 "UPDATE knowledge_bases SET readme_md = ? WHERE id = ?",
@@ -505,6 +562,8 @@ class SqliteAppStore:
             kb = self._kb_row_by_name(name)
             if kb is None:
                 return False
+            if not self._kb_ready_from_row(kb):
+                return False
             self._conn.execute(
                 "UPDATE knowledge_bases SET is_public = ? WHERE id = ?",
                 (pub_i, int(kb["id"])),
@@ -518,6 +577,8 @@ class SqliteAppStore:
             kb = self._kb_row_by_name(name)
             if kb is None:
                 return False
+            if not self._kb_ready_from_row(kb):
+                return False
             self._conn.execute(
                 "UPDATE knowledge_bases SET icon = ? WHERE id = ?",
                 (icon_key, int(kb["id"])),
@@ -529,6 +590,8 @@ class SqliteAppStore:
         with self._lock:
             kb = self._kb_row_by_name(kb_name)
             if kb is None:
+                return False
+            if not self._kb_ready_from_row(kb):
                 return False
             kid = int(kb["id"])
             path = self._kb_icon_file(kid)
@@ -545,6 +608,8 @@ class SqliteAppStore:
             kb = self._kb_row_by_name(kb_name)
             if kb is None:
                 return None
+            if not self._kb_ready_from_row(kb):
+                return None
             kid = int(kb["id"])
             mime = str(kb["icon"] or "").strip()
             if not mime or "/" not in mime:
@@ -559,6 +624,8 @@ class SqliteAppStore:
         with self._lock:
             kb = self._kb_row_by_name(kb_name)
             if kb is None:
+                return False
+            if not self._kb_ready_from_row(kb):
                 return False
             kid = int(kb["id"])
             path = self._kb_icon_file(kid)
@@ -583,6 +650,8 @@ class SqliteAppStore:
             kb = self._kb_row_by_name(old_key)
             if kb is None:
                 return False
+            if not self._kb_ready_from_row(kb):
+                return False
             try:
                 self._conn.execute(
                     "UPDATE knowledge_bases SET name = ? WHERE id = ?",
@@ -602,6 +671,7 @@ class SqliteAppStore:
                 SELECT kb.*, u.username AS owner_username
                 FROM knowledge_bases kb
                 JOIN users u ON u.id = kb.owner_id
+                WHERE COALESCE(kb.kb_ready, 1) = 1
                 ORDER BY kb.name COLLATE NOCASE
                 """
             ).fetchall()
@@ -620,6 +690,7 @@ class SqliteAppStore:
                 SELECT kb.*, u.username AS owner_username
                 FROM knowledge_bases kb
                 JOIN users u ON u.id = kb.owner_id
+                WHERE COALESCE(kb.kb_ready, 1) = 1
                 ORDER BY kb.name COLLATE NOCASE
                 """
             ).fetchall()
@@ -633,12 +704,16 @@ class SqliteAppStore:
             kb = self._kb_row_by_name(kb_name)
             if kb is None:
                 return None
+            if not self._kb_ready_from_row(kb):
+                return None
             return self._permission_unlocked(int(user_id), kb)
 
     def list_members_roster(self, kb_name: str) -> list[dict] | None:
         with self._lock:
             kb = self._kb_row_by_name(kb_name)
             if kb is None:
+                return None
+            if not self._kb_ready_from_row(kb):
                 return None
             owner = self._conn.execute(
                 "SELECT username FROM users WHERE id = ?",
@@ -681,6 +756,8 @@ class SqliteAppStore:
             kb = self._kb_row_by_name(kb_name)
             if kb is None:
                 return False
+            if not self._kb_ready_from_row(kb):
+                return False
             row = self._conn.execute(
                 "SELECT 1 FROM kb_subscriptions WHERE user_id = ? AND kb_id = ? LIMIT 1",
                 (int(user_id), int(kb["id"])),
@@ -691,6 +768,8 @@ class SqliteAppStore:
         with self._lock:
             kb = self._kb_row_by_name(kb_name)
             if kb is None:
+                return False
+            if not self._kb_ready_from_row(kb):
                 return False
             uid = int(user_id)
             kid = int(kb["id"])
@@ -716,7 +795,7 @@ class SqliteAppStore:
                 FROM kb_subscriptions s
                 JOIN knowledge_bases kb ON kb.id = s.kb_id
                 JOIN users u ON u.id = kb.owner_id
-                WHERE s.user_id = ?
+                WHERE s.user_id = ? AND COALESCE(kb.kb_ready, 1) = 1
                 ORDER BY kb.name COLLATE NOCASE
                 """,
                 (int(user_id),),
@@ -737,7 +816,8 @@ class SqliteAppStore:
                 FROM knowledge_bases kb
                 JOIN users u ON u.id = kb.owner_id
                 LEFT JOIN kb_subscriptions s ON s.kb_id = kb.id AND s.user_id = ?
-                WHERE kb.owner_id = ? OR s.user_id IS NOT NULL
+                WHERE COALESCE(kb.kb_ready, 1) = 1
+                  AND (kb.owner_id = ? OR s.user_id IS NOT NULL)
                 ORDER BY kb.name COLLATE NOCASE
                 """,
                 (int(user_id), int(user_id)),
@@ -839,6 +919,8 @@ class SqliteAppStore:
             kb = self._kb_row_by_name(kb_name)
             if kb is None:
                 return False
+            if not self._kb_ready_from_row(kb):
+                return False
             if int(kb["owner_id"]) != int(actor_user_id):
                 return False
             target = self._conn.execute(
@@ -878,6 +960,8 @@ class SqliteAppStore:
             kb = self._kb_row_by_name(kb_name)
             if kb is None:
                 return False
+            if not self._kb_ready_from_row(kb):
+                return False
             if int(kb["owner_id"]) != int(actor_user_id):
                 return False
             target = self._conn.execute(
@@ -896,3 +980,309 @@ class SqliteAppStore:
             n = cur.rowcount
             self._conn.commit()
         return n > 0
+
+    def knowledge_base_name_taken(self, name: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM knowledge_bases WHERE name = ? COLLATE NOCASE LIMIT 1",
+                (str(name).strip(),),
+            ).fetchone()
+        return row is not None
+
+    def create_pending_knowledge_base(
+        self,
+        *,
+        name: str,
+        description: str,
+        readme_md: str,
+        db_path: str,
+        owner_id: int,
+        is_public: bool = False,
+        icon: str = "book",
+    ) -> None:
+        t = self._now()
+        desc = str(description).strip()
+        readme = str(readme_md or "").strip()
+        pub_i = 1 if is_public else 0
+        icon_key = str(icon or "book").strip() or "book"
+        with self._lock:
+            color = self._pick_least_used_list_color_unlocked()
+            self._conn.execute(
+                """
+                INSERT INTO knowledge_bases(
+                    name, description, readme_md, db_path, owner_id, created_at,
+                    list_color_idx, is_public, icon, kb_ready
+                )
+                VALUES(?,?,?,?,?,?,?,?,?,0)
+                """,
+                (name, desc, readme, str(db_path), int(owner_id), t, color, pub_i, icon_key),
+            )
+            self._conn.commit()
+
+    def finalize_knowledge_base_ready(self, name: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE knowledge_bases SET kb_ready = 1 WHERE name = ? COLLATE NOCASE",
+                (str(name).strip(),),
+            )
+            self._conn.commit()
+        return int(cur.rowcount or 0) > 0
+
+    def count_user_upload_tasks_active(self, user_id: int) -> int:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM build_jobs
+                WHERE user_id = ? AND task_kind = 'upload'
+                  AND status IN ('queued', 'running')
+                """,
+                (int(user_id),),
+            ).fetchone()
+        return int(row["c"] or 0) if row else 0
+
+    def enqueue_build_job(
+        self,
+        *,
+        job_id: str,
+        user_id: int,
+        task_kind: str,
+        op: str,
+        kb_name: str,
+        upload_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        t = self._now()
+        payload_json = json.dumps(payload, ensure_ascii=False)
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO build_jobs(
+                    job_id, user_id, task_kind, op, kb_name, status,
+                    cancel_requested, created_at, percent, phase, detail,
+                    upload_id, payload_json
+                )
+                VALUES(?,?,?,?,?,'queued',0,?,0,'queued','',?,?)
+                """,
+                (
+                    job_id,
+                    int(user_id),
+                    str(task_kind),
+                    str(op),
+                    str(kb_name),
+                    t,
+                    str(upload_id),
+                    payload_json,
+                ),
+            )
+            self._conn.commit()
+
+    def _build_job_row_to_dict(self, row: sqlite3.Row) -> dict[str, Any]:
+        result = None
+        if row["result_json"]:
+            try:
+                result = json.loads(str(row["result_json"]))
+            except json.JSONDecodeError:
+                result = None
+        return {
+            "job_id": str(row["job_id"]),
+            "user_id": int(row["user_id"]),
+            "task_kind": str(row["task_kind"]),
+            "op": str(row["op"]),
+            "kb_name": str(row["kb_name"]),
+            "status": str(row["status"]),
+            "cancel_requested": bool(int(row["cancel_requested"] or 0)),
+            "created_at": float(row["created_at"] or 0.0),
+            "started_at": float(row["started_at"]) if row["started_at"] is not None else None,
+            "finished_at": float(row["finished_at"]) if row["finished_at"] is not None else None,
+            "percent": int(row["percent"] or 0),
+            "phase": str(row["phase"] or ""),
+            "detail": str(row["detail"] or ""),
+            "error": str(row["error"]) if row["error"] else None,
+            "result": result,
+            "upload_id": str(row["upload_id"] or ""),
+            "payload": json.loads(str(row["payload_json"] or "{}")),
+        }
+
+    def get_build_job(self, job_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM build_jobs WHERE job_id = ?",
+                (str(job_id).strip(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return self._build_job_row_to_dict(row)
+
+    def build_job_cancel_requested(self, job_id: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT cancel_requested FROM build_jobs WHERE job_id = ?",
+                (str(job_id).strip(),),
+            ).fetchone()
+        return bool(row and int(row["cancel_requested"] or 0))
+
+    def list_build_jobs_for_user(self, user_id: int, *, limit: int = 200) -> list[dict[str, Any]]:
+        lim = max(1, min(500, int(limit)))
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT * FROM build_jobs
+                WHERE user_id = ? AND status IN ('queued', 'running')
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (int(user_id), lim),
+            ).fetchall()
+        return [self._build_job_row_to_dict(r) for r in rows]
+
+    def delete_build_job(self, job_id: str) -> bool:
+        jid = str(job_id).strip()
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM build_jobs WHERE job_id = ?", (jid,))
+            self._conn.commit()
+        return int(cur.rowcount or 0) > 0
+
+    def update_build_job_fields(
+        self,
+        job_id: str,
+        *,
+        status: str | None = None,
+        phase: str | None = None,
+        percent: int | None = None,
+        detail: str | None = None,
+        error: str | None = None,
+        result: dict[str, Any] | None = None,
+        cancel_requested: bool | None = None,
+        started_at: float | None = None,
+        finished_at: float | None = None,
+    ) -> bool:
+        fields: list[str] = []
+        vals: list[Any] = []
+        if status is not None:
+            fields.append("status = ?")
+            vals.append(str(status))
+        if phase is not None:
+            fields.append("phase = ?")
+            vals.append(str(phase))
+        if percent is not None:
+            fields.append("percent = ?")
+            vals.append(int(percent))
+        if detail is not None:
+            fields.append("detail = ?")
+            vals.append(str(detail))
+        if error is not None:
+            fields.append("error = ?")
+            vals.append(str(error))
+        if result is not None:
+            fields.append("result_json = ?")
+            vals.append(json.dumps(result, ensure_ascii=False))
+        if cancel_requested is not None:
+            fields.append("cancel_requested = ?")
+            vals.append(1 if cancel_requested else 0)
+        if started_at is not None:
+            fields.append("started_at = ?")
+            vals.append(float(started_at))
+        if finished_at is not None:
+            fields.append("finished_at = ?")
+            vals.append(float(finished_at))
+        if not fields:
+            return False
+        vals.append(str(job_id).strip())
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE build_jobs SET {', '.join(fields)} WHERE job_id = ?",
+                vals,
+            )
+            self._conn.commit()
+        return int(cur.rowcount or 0) > 0
+
+    def claim_next_queued_build_job(self) -> dict[str, Any] | None:
+        """Atomically claim the oldest queued job under ``_lock`` (single shared connection).
+
+        Avoid ``BEGIN IMMEDIATE`` here: sqlite3 may already have an implicit/open transaction,
+        which raises ``OperationalError: cannot start a transaction within a transaction``.
+        """
+        t = self._now()
+        row2 = None
+        with self._lock:
+            try:
+                row = self._conn.execute(
+                    """
+                    SELECT job_id FROM build_jobs
+                    WHERE status = 'queued'
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if row is None:
+                    self._conn.commit()
+                    return None
+                jid = str(row["job_id"])
+                cur = self._conn.execute(
+                    """
+                    UPDATE build_jobs
+                    SET status = 'running', started_at = ?, phase = 'extract', percent = 1
+                    WHERE job_id = ? AND status = 'queued'
+                    """,
+                    (t, jid),
+                )
+                if int(cur.rowcount or 0) == 0:
+                    self._conn.rollback()
+                    return None
+                row2 = self._conn.execute(
+                    "SELECT * FROM build_jobs WHERE job_id = ?",
+                    (jid,),
+                ).fetchone()
+                self._conn.commit()
+            except Exception:
+                try:
+                    self._conn.rollback()
+                except sqlite3.Error:
+                    pass
+                raise
+        if row2 is None:
+            return None
+        return self._build_job_row_to_dict(row2)
+
+    def request_cancel_build_job(
+        self, job_id: str, user_id: int
+    ) -> tuple[str | None, dict[str, Any] | None]:
+        """On success: (None, None) for running job (cancel flag set), or (None, meta) if queued job removed.
+
+        ``meta`` may include ``dropped_queued``, ``op``, ``kb_name``, ``upload_id`` for HTTP cleanup.
+        On failure: (error_message, None).
+        """
+        jid = str(job_id).strip()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT user_id, status, op, kb_name, upload_id FROM build_jobs WHERE job_id = ?",
+                (jid,),
+            ).fetchone()
+            if row is None:
+                return ("Unknown job", None)
+            if int(row["user_id"]) != int(user_id):
+                return ("Forbidden", None)
+            st = str(row["status"])
+            if st in ("done", "error", "cancelled"):
+                return ("Job already finished", None)
+            if st == "queued":
+                op = str(row["op"] or "")
+                kb_name = str(row["kb_name"] or "")
+                upload_id = str(row["upload_id"] or "")
+                self._conn.execute("DELETE FROM build_jobs WHERE job_id = ?", (jid,))
+                self._conn.commit()
+                return (
+                    None,
+                    {
+                        "dropped_queued": True,
+                        "op": op,
+                        "kb_name": kb_name,
+                        "upload_id": upload_id,
+                    },
+                )
+            self._conn.execute(
+                "UPDATE build_jobs SET cancel_requested = 1 WHERE job_id = ?",
+                (jid,),
+            )
+            self._conn.commit()
+        return (None, None)

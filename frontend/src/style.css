@@ -10,6 +10,10 @@
   --warning: #e8c170;
   --sidebar-bg: rgba(12, 16, 28, 0.75);
   --nav-active: rgba(109, 168, 255, 0.18);
+  /* Document pages: centered column only (no inner card) */
+  --page-content-max: 720px;
+  --page-content-wide: 920px;
+  --page-section-rule: rgba(140, 169, 230, 0.14);
 }
 
 * {
@@ -283,6 +287,11 @@ body.auth-page .global-status {
   margin-top: 0;
 }
 
+.lang-select-wrap--bare .lang-select {
+  width: 100%;
+  max-width: none;
+}
+
 .lang-select-label {
   font-size: 13px;
   color: var(--muted);
@@ -330,7 +339,7 @@ body.auth-page .global-status {
   flex-direction: column;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: rgba(12, 16, 30, 0.45);
+  background: rgba(10, 14, 26, 0.55);
   padding: 0;
   min-height: 280px;
   overflow: hidden;
@@ -349,6 +358,89 @@ body.auth-page .global-status {
   min-height: 0;
 }
 
+/* Document pages: centered column, sections separated by hairlines (no inner panel) */
+.shell-body.page-frame {
+  padding: 22px 28px 32px;
+}
+
+.page-frame__inner {
+  max-width: var(--page-content-max);
+  margin: 0 auto;
+  width: 100%;
+}
+
+.shell-body.page-frame--wide .page-frame__inner {
+  max-width: var(--page-content-wide);
+}
+
+.page-frame__inner--narrow {
+  max-width: 440px;
+}
+
+.page-stack {
+  display: flex;
+  flex-direction: column;
+}
+
+.page-stack__section {
+  padding: 22px 0 24px;
+}
+
+.page-stack__section:first-child {
+  padding-top: 0;
+}
+
+.page-frame__inner--narrow > .page-stack__section:first-child {
+  padding-top: 0;
+}
+
+.page-stack__section + .page-stack__section {
+  border-top: 1px solid var(--page-section-rule);
+}
+
+.page-stack__section--form {
+  padding-bottom: 4px;
+}
+
+.page-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: rgba(168, 181, 214, 0.88);
+  margin: 0 0 14px;
+}
+
+.page-frame .stack-form > label:first-of-type,
+.page-frame .page-stack__section--form form > label:first-of-type {
+  margin-top: 0;
+}
+
+.page-frame label > span:first-child {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.page-frame input,
+.page-frame textarea,
+.page-frame select {
+  background: rgba(8, 12, 24, 0.72);
+  border-color: rgba(140, 169, 230, 0.22);
+}
+
+.page-stack__section--form .form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--page-section-rule);
+}
+
 .shell-body > .kb-grid {
   margin: 0;
 }
@@ -358,15 +450,33 @@ body.auth-page .global-status {
   background: rgba(19, 24, 40, 0.65);
 }
 
-/* Profile + add-kb + kb detail: only the outer shell-content border; no inner card frame. */
-.shell-body.profile-panel > .card,
-.shell-body.add-kb-page > .card,
-.shell-body.kb-detail-shell > .kb-detail-card {
-  border: none;
-  box-shadow: none;
-  background: transparent;
-  backdrop-filter: none;
-  padding: 0;
+/* KB detail / manage / task: flat flow inside shell (no nested card) */
+.page-frame .kb-detail-flow .kb-detail-block {
+  padding: 20px 0 22px;
+  margin: 0;
+}
+
+.page-frame .kb-detail-flow .kb-detail-block:first-child {
+  padding-top: 0;
+}
+
+.page-frame .kb-detail-flow .hr-soft--kb-detail {
+  margin: 0;
+  border: 0;
+  height: 0;
+  border-top: 1px solid var(--page-section-rule);
+}
+
+.topbar--detail .topbar-text h1 {
+  font-size: 23px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.topbar--detail .topbar-subtitle {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  opacity: 0.9;
 }
 
 .topbar {
@@ -688,6 +798,33 @@ button.small {
   bottom: 10px;
 }
 
+/* Task list: running jobs — same corner placement as plaza lock badge */
+.kb-card-running-corner {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.task-card-running-spin {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(109, 168, 255, 0.22);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: task-card-running-rotate 0.65s linear infinite;
+}
+
+@keyframes task-card-running-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .kb-detail-actions {
   display: flex;
   flex-wrap: wrap;
@@ -897,6 +1034,29 @@ button.small {
   margin: 0 0 12px;
 }
 
+.page-frame .kb-detail-flow .kb-detail-block-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: rgba(168, 181, 214, 0.88);
+  margin: 0 0 14px;
+}
+
+.page-frame .kb-detail-flow .kb-detail-desc-text {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.page-frame .kb-detail-flow .md-content {
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.kb-detail-detail-line {
+  margin: 10px 0 0;
+}
+
 .kb-detail-desc-text {
   margin: 0;
   line-height: 1.5;
@@ -921,20 +1081,17 @@ button.small {
   grid-column: 1 / -1;
 }
 
-.add-kb-page .form-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-top: 16px;
+/* Add-kb: same block layout as manage (kb-detail-block); spacing for rows after h2 */
+.add-kb-page .kb-detail-block .kb-icon-manage-row {
+  margin-top: 4px;
 }
 
-/* Add-kb: label text → image / toggle row (divs don’t get input margin-top). */
-.add-kb-page label .kb-icon-manage-row {
-  margin-top: 12px;
+.add-kb-page .kb-detail-block .md-toggle-row {
+  margin: 0 0 10px;
 }
 
-.add-kb-page label .md-toggle-row {
-  margin-top: 12px;
+.add-kb-page .kb-detail-block .file-picker-row {
+  margin-top: 4px;
 }
 
 .profile-avatar-preview {
@@ -984,6 +1141,27 @@ button.small {
 
 .profile-section-title:first-child {
   margin-top: 0;
+}
+
+
+.profile-actions-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.profile-actions-stack button {
+  margin: 0;
+}
+
+.profile-msg-line {
+  margin-top: 10px;
+}
+
+.profile-apikey-hint {
+  margin: 0 0 10px;
 }
 
 .api-key-list {
@@ -1073,6 +1251,10 @@ button.small {
   .shell-body {
     padding: 16px 18px 20px;
   }
+
+  .shell-body.page-frame {
+    padding: 18px 16px 26px;
+  }
 }
 
 .search-row {
@@ -1084,6 +1266,11 @@ button.small {
 .search-row input {
   flex: 1;
   margin-top: 0;
+}
+
+.page-frame .kb-detail-flow .search-out {
+  background: rgba(6, 10, 22, 0.72);
+  border-color: rgba(140, 169, 230, 0.2);
 }
 
 .search-out {
@@ -1166,6 +1353,16 @@ button.small {
   gap: 10px;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+/* Build task cards: explicit create/update + queued/running (text) */
+.task-card-status-line {
+  margin: 0.35rem 0 0;
+}
+
+.task-card-sep {
+  color: var(--muted);
+  opacity: 0.75;
 }
 
 a {
