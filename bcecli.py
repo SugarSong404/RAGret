@@ -1,7 +1,7 @@
 """
 bcecli — CLI entry (thin shim).
 
-Implementation lives in the ``bcecli`` package: ``bcecli.cli``, ``bcecli.rag``, ``bcecli.server``, …
+Implementation: ``bcecli`` (index/search/RAG), ``server`` (HTTP ``serve``), …
 """
 from __future__ import annotations
 

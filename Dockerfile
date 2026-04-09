@@ -49,10 +49,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Skip Transformers on-the-fly safetensors conversion (extra Hub API calls, e.g. list commits on PR refs).
+# Helps flaky/build-time networks; main model files still download from HF_ENDPOINT as usual.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     HF_ENDPOINT=${HF_ENDPOINT} \
     HF_HOME=/opt/hf \
+    DISABLE_SAFETENSORS_CONVERSION=true \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
     PIP_BREAK_SYSTEM_PACKAGES=1
@@ -82,6 +85,8 @@ RUN printf '%s\n' \
     'alias ll="ls -la"' \
     '# bcecli: python bcecli.py -h | index | search | serve' \
     >> /root/.bashrc
+
+EXPOSE 8765
 
 EXPOSE 8765
 
