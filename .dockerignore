@@ -13,3 +13,6 @@ venv
 bcecli_registry.json
 hq_test
 sample_docs
+data
+upload
+models
