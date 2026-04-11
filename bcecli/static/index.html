@@ -4,8 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>bce-cli Console</title>
-    <script type="module" crossorigin src="/assets/index-uTAyw1UI.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Cq9oBQL5.css">
+    <script>
+      try {
+        var _t = localStorage.getItem("bcecli.ui.theme");
+        if (_t === "light") document.documentElement.setAttribute("data-theme", "light");
+      } catch (_) {}
+    </script>
+    <script type="module" crossorigin src="/assets/index-ClXkCOpi.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BoN7vj9k.css">
   </head>
   <body>
     <div id="app" class="app-root"></div>

@@ -539,14 +539,14 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     raw = p.read_bytes()
                     buf = io.BytesIO()
                     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-                        zf.writestr("SKILL.md", raw)
+                        zf.writestr("bcecli/SKILL.md", raw)
                     body = buf.getvalue()
                 except OSError as e:
                     _send_json(self, 500, {"ok": False, "error": str(e)})
                     return
                 self.send_response(200)
                 self.send_header("Content-Type", "application/zip")
-                self.send_header("Content-Disposition", 'attachment; filename="SKILL.zip"')
+                self.send_header("Content-Disposition", 'attachment; filename="bcecli.zip"')
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)

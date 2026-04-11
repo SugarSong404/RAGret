@@ -1,6 +1,7 @@
 """Single-threaded global queue for corpus upload / index build jobs."""
 from __future__ import annotations
 
+import gc
 import json
 import os
 import re
@@ -40,21 +41,60 @@ def _webhook_tmp_base(root: Path) -> Path:
     return p
 
 
-def _cleanup_legacy_webhook_tmp_dirs(root: Path) -> None:
-    """Best-effort cleanup for old temp dirs created under repo root."""
-    try:
-        for child in root.iterdir():
-            if child.is_dir() and child.name.startswith("bcecli-webhook-"):
-                shutil.rmtree(child, ignore_errors=True)
-    except OSError:
-        pass
+def cleanup_webhook_temp_directories(repo_root: Path, *, primary_clone: Path | None = None) -> None:
+    """One cleanup pass: remove primary clone dir (if set), then all bcecli-webhook-* under webhook/ and repo root."""
+    root_r = repo_root.resolve()
+
+    def _rm_tree(path: Path, ctx: str) -> None:
+        if not path.is_dir():
+            return
+        # Dulwich / Windows may keep packfile mmap handles briefly; retry with gc + backoff.
+        delays_s = (0.0, 0.08, 0.15, 0.25, 0.4, 0.65, 1.0, 1.5, 2.0, 2.5, 3.0)
+        last_err: OSError | None = None
+        for delay in delays_s:
+            if delay > 0:
+                time.sleep(delay)
+            gc.collect()
+            try:
+                shutil.rmtree(path)
+                return
+            except OSError as e:
+                last_err = e
+                if sys.platform == "win32" and getattr(e, "winerror", None) == 32:
+                    continue
+                sys.stderr.write(f"bcecli-webhook-cleanup: rmtree failed ({ctx})\n  path={path}\n  error={e}\n")
+                traceback.print_exc(file=sys.stderr)
+                return
+        if last_err is not None:
+            sys.stderr.write(
+                f"bcecli-webhook-cleanup: rmtree exhausted retries ({ctx})\n  path={path}\n  error={last_err}\n"
+            )
+            traceback.print_exc(file=sys.stderr)
+
+    if primary_clone is not None:
+        pc = Path(primary_clone).resolve()
+        if pc.is_dir():
+            _rm_tree(pc, "primary webhook clone")
+
+    wb = (root_r / "webhook").resolve()
+    for base, label in ((wb, "webhook/"), (root_r, "repo root")):
+        try:
+            if not base.is_dir():
+                continue
+            for child in sorted(base.iterdir()):
+                if child.is_dir() and child.name.startswith("bcecli-webhook-"):
+                    _rm_tree(child, f"{label} temp {child.name}")
+        except OSError as e:
+            sys.stderr.write(f"bcecli-webhook-cleanup: listdir failed ({label})\n  path={base}\n  error={e}\n")
+            traceback.print_exc(file=sys.stderr)
 
 
 def _clone_webhook_repo(*, repo_url: str, branch: str, work_dir: Path) -> Path:
-    td = Path(tempfile.mkdtemp(prefix="bcecli-webhook-", dir=str(_webhook_tmp_base(work_dir))))
+    wb = _webhook_tmp_base(work_dir)
+    td = Path(tempfile.mkdtemp(prefix="bcecli-webhook-", dir=str(wb)))
     br = str(branch or "").strip() or None
     try:
-        porcelain.clone(
+        repo_obj = porcelain.clone(
             source=str(repo_url),
             target=str(td),
             depth=1,
@@ -63,6 +103,14 @@ def _clone_webhook_repo(*, repo_url: str, branch: str, work_dir: Path) -> Path:
             outstream=sys.stdout.buffer,
             branch=br,
         )
+        try:
+            if repo_obj is not None:
+                closer = getattr(repo_obj, "close", None)
+                if callable(closer):
+                    closer()
+        except OSError as e:
+            sys.stderr.write(f"bcecli-webhook-clone: repo close warning\n  path={td}\n  error={e}\n")
+        gc.collect()
     except Exception as e:
         sys.stderr.write(
             "bcecli-webhook-clone: clone failed\n"
@@ -71,10 +119,6 @@ def _clone_webhook_repo(*, repo_url: str, branch: str, work_dir: Path) -> Path:
             f"  error={e}\n"
         )
         traceback.print_exc(file=sys.stderr)
-        try:
-            shutil.rmtree(td, ignore_errors=True)
-        except OSError:
-            pass
         detail = str(e).strip()
         if isinstance(e, NotGitRepository):
             detail = detail or "repository is not a git repository"
@@ -440,11 +484,8 @@ def run_one_build_job(
     finally:
         if task_kind == "upload":
             _cleanup_staging(upload_base, upload_id)
-        if webhook_workdir is not None:
-            try:
-                shutil.rmtree(webhook_workdir, ignore_errors=True)
-            except OSError:
-                pass
+        if task_kind == "webhook":
+            cleanup_webhook_temp_directories(root, primary_clone=webhook_workdir)
 
 
 def global_build_worker_loop(
@@ -456,7 +497,6 @@ def global_build_worker_loop(
     stop_event: threading.Event,
     tick_s: float = 0.35,
 ) -> None:
-    _cleanup_legacy_webhook_tmp_dirs(root)
     while not stop_event.is_set():
         try:
             job = app_store.claim_next_queued_build_job()

@@ -2,11 +2,14 @@ const AUTH_TOKEN_KEY = "bcecli.auth.token";
 const STATE_KEY = "bcecli.frontend.state.v3";
 /** Persisted interface language (mirrored from state for stable preference). */
 const UI_LANG_KEY = "bcecli.ui.lang";
+/** Persisted UI theme: "dark" | "light" (mirrored for early paint). */
+const UI_THEME_KEY = "bcecli.ui.theme";
 /** Served from Vite `public/` → static root */
 const DEFAULT_AVATAR_URL = "/default-avatar.svg";
 const DEFAULT_KB_ICON_URL = "/default-kb.svg";
 
 let currentLang = "en";
+let currentTheme = "dark";
 let stagedUploadId = null;
 /** Manage-page corpus update: staged tar (not persisted across reload). */
 let manageCorpusUploadId = null;
@@ -153,6 +156,7 @@ const i18n = {
     readmePreview: "Preview",
     readmeEdit: "Edit",
     archiveLabel: "Archive (.tar / .tar.gz / .tgz)",
+    webhookAddKbSectionTitle: "Webhook & repository (GitLab HTTP clone, URL, secret)",
     webhookUrlLabel: "Webhook URL",
     webhookSecretLabel: "Secret token",
     webhookRepoUrlLabel: "Repository URL (HTTP/HTTPS)",
@@ -197,6 +201,8 @@ const i18n = {
     removeMember: "Remove",
     saveDescription: "Save description",
     renameKb: "Rename knowledge base",
+    renameKbWebhookWarning:
+      "Renaming changes the webhook URL path (the last segment matches the knowledge base name).",
     newKbName: "New knowledge base name",
     saveName: "Save name",
     renameDone: "Knowledge base renamed.",
@@ -259,6 +265,10 @@ const i18n = {
     sqliteMissing: "Index file missing",
     navAccount: "Account",
     interfaceLanguage: "Language",
+    preferencesTitle: "Preferences",
+    themeLabel: "Appearance",
+    themeDark: "Dark",
+    themeLight: "Light",
     accountTitle: "Account settings",
     accountSubtitle: "Profile photo",
     apiKeysTitle: "API keys",
@@ -348,6 +358,7 @@ const i18n = {
     readmePreview: "预览",
     readmeEdit: "编辑",
     archiveLabel: "归档（.tar / .tar.gz / .tgz）",
+    webhookAddKbSectionTitle: "Webhook 与仓库（GitLab HTTP 克隆、链接、Secret）",
     webhookUrlLabel: "Webhook 链接",
     webhookSecretLabel: "Secret Token",
     webhookRepoUrlLabel: "仓库地址（HTTP/HTTPS）",
@@ -392,6 +403,8 @@ const i18n = {
     removeMember: "移除",
     saveDescription: "保存描述",
     renameKb: "重命名知识库",
+    renameKbWebhookWarning:
+      "重命名后 Webhook 地址会变化（URL 路径末尾与知识库名一致）。",
     newKbName: "新的知识库名称",
     saveName: "保存名称",
     renameDone: "知识库已重命名。",
@@ -454,6 +467,10 @@ const i18n = {
     sqliteMissing: "索引文件缺失",
     navAccount: "账户",
     interfaceLanguage: "界面语言",
+    preferencesTitle: "偏好设置",
+    themeLabel: "界面风格",
+    themeDark: "暗色",
+    themeLight: "亮色",
     accountTitle: "账户设置",
     accountSubtitle: "头像",
     apiKeysTitle: "API Key 列表",
@@ -648,10 +665,12 @@ function saveState() {
   try {
     const payload = JSON.stringify({
       lang: currentLang,
+      theme: currentTheme,
       stagedUploadId,
     });
     localStorage.setItem(STATE_KEY, payload);
     localStorage.setItem(UI_LANG_KEY, currentLang);
+    localStorage.setItem(UI_THEME_KEY, currentTheme);
   } catch {
     /* ignore */
   }
@@ -664,6 +683,17 @@ function loadState() {
   } catch {
     return null;
   }
+}
+
+function applyTheme() {
+  if (currentTheme === "light") document.documentElement.setAttribute("data-theme", "light");
+  else document.documentElement.removeAttribute("data-theme");
+}
+
+function setTheme(theme) {
+  currentTheme = theme === "light" ? "light" : "dark";
+  applyTheme();
+  saveState();
 }
 
 function setLang(lang) {
@@ -689,25 +719,40 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function sanitizeFenceLang(s) {
+  const t = String(s || "").trim();
+  if (!t || !/^[a-zA-Z][\w+#.-]{0,31}$/.test(t)) return "";
+  return t;
+}
+
 function markdownToHtml(md) {
   const src = String(md || "").replace(/\r\n/g, "\n");
   const lines = src.split("\n");
   const out = [];
   let inCode = false;
+  let codeLines = [];
+  let fenceLang = "";
   for (const raw of lines) {
     const line = raw;
-    if (line.trim().startsWith("```")) {
+    const fenceMatch = line.trim().match(/^```(\S*)\s*$/);
+    if (fenceMatch) {
       if (!inCode) {
         inCode = true;
-        out.push("<pre><code>");
+        fenceLang = sanitizeFenceLang(fenceMatch[1]);
+        codeLines = [];
       } else {
+        const langClass = fenceLang ? ` language-${esc(fenceLang)}` : "";
+        out.push(
+          `<pre class="md-fence"><code class="md-fence-code${langClass}">${codeLines.map(esc).join("\n")}</code></pre>`,
+        );
         inCode = false;
-        out.push("</code></pre>");
+        codeLines = [];
+        fenceLang = "";
       }
       continue;
     }
     if (inCode) {
-      out.push(`${esc(line)}\n`);
+      codeLines.push(line);
       continue;
     }
     if (/^###\s+/.test(line)) {
@@ -737,13 +782,16 @@ function markdownToHtml(md) {
     let html = esc(line)
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
       .replace(/\*(.+?)\*/g, "<em>$1</em>")
-      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>')
       .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
     out.push(`<p>${html}</p>`);
   }
   let merged = out.join("\n");
   merged = merged.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`);
-  if (inCode) merged += "</code></pre>";
+  if (inCode) {
+    const langClass = fenceLang ? ` language-${esc(fenceLang)}` : "";
+    merged += `<pre class="md-fence"><code class="md-fence-code${langClass}">${codeLines.map(esc).join("\n")}</code></pre>`;
+  }
   return merged;
 }
 
@@ -986,6 +1034,30 @@ function bindInterfaceLangSelect(selectId) {
   });
 }
 
+function renderThemeSelect(selectId, omitOuterLabel = false) {
+  const darkSel = currentTheme === "dark" ? " selected" : "";
+  const lightSel = currentTheme === "light" ? " selected" : "";
+  const sel = `<select id="${esc(selectId)}" class="lang-select" aria-label="${esc(T("themeLabel"))}">
+        <option value="dark"${darkSel}>${esc(T("themeDark"))}</option>
+        <option value="light"${lightSel}>${esc(T("themeLight"))}</option>
+      </select>`;
+  if (omitOuterLabel) {
+    return `<div class="lang-select-wrap lang-select-wrap--bare">${sel}</div>`;
+  }
+  return `
+    <label class="lang-select-wrap">
+      <span class="lang-select-label">${esc(T("themeLabel"))}</span>
+      ${sel}
+    </label>`;
+}
+
+function bindThemeSelect(selectId) {
+  const el = document.getElementById(selectId);
+  el?.addEventListener("change", () => {
+    if (el.value === "dark" || el.value === "light") setTheme(el.value);
+  });
+}
+
 function renderTopbarUser(user) {
   if (!user?.username) return "";
   return `
@@ -1057,6 +1129,7 @@ function bindUploadForm() {
   const webhookSecretRegenBtn = document.getElementById("kb-webhook-secret-regen");
   const webhookRepoUrlInput = document.getElementById("kb-webhook-repo-url");
   const nameInput = document.getElementById("kb-name");
+  const sourceSectionTitleEl = document.getElementById("kb-source-section-title");
   let webhookSecretRaw = "";
   let webhookSecretVisible = false;
   const refreshWebhookSecretInput = () => {
@@ -1096,11 +1169,14 @@ function bindUploadForm() {
     if (tarBlock) tarBlock.style.display = tp === "tar" ? "" : "none";
     if (uploadBlock) uploadBlock.style.display = tp === "tar" ? "" : "none";
     if (webhookBlock) webhookBlock.style.display = tp === "webhook" ? "" : "none";
+    if (sourceSectionTitleEl) {
+      sourceSectionTitleEl.textContent = tp === "webhook" ? T("webhookAddKbSectionTitle") : T("archiveLabel");
+    }
+    refreshWebhookUrl();
     if (tp === "webhook" && !webhookSecretRaw) {
       void generateWebhookSecret();
     }
   };
-  refreshWebhookUrl();
   syncSourceTypeUi();
   sourceTypeEl?.addEventListener("change", syncSourceTypeUi);
   nameInput?.addEventListener("input", refreshWebhookUrl);
@@ -1457,7 +1533,7 @@ async function renderAddKb(user) {
                 </div>
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
-                  <h2 class="kb-detail-block-title">${esc(T("archiveLabel"))}</h2>
+                  <h2 class="kb-detail-block-title" id="kb-source-section-title">${esc(T("archiveLabel"))}</h2>
                   <div id="kb-source-tar-block">
                     <input type="file" id="kb-archive" class="hidden-file-input" accept=".tar,.tgz,.tar.gz,.tar.bz2,.tar.xz,application/x-tar" />
                     <div class="file-picker-row">
@@ -1650,8 +1726,17 @@ async function renderProfile(user) {
                 </div>
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
-                  <h2 class="kb-detail-block-title">${esc(T("interfaceLanguage"))}</h2>
-                  ${renderInterfaceLangSelect("profile-lang-select", true)}
+                  <h2 class="kb-detail-block-title">${esc(T("preferencesTitle"))}</h2>
+                  <div class="preferences-stack">
+                    <div class="preference-row">
+                      <span class="lang-select-label">${esc(T("interfaceLanguage"))}</span>
+                      ${renderInterfaceLangSelect("profile-lang-select", true)}
+                    </div>
+                    <div class="preference-row">
+                      <span class="lang-select-label">${esc(T("themeLabel"))}</span>
+                      ${renderThemeSelect("profile-theme-select", true)}
+                    </div>
+                  </div>
                 </div>
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
@@ -1681,6 +1766,7 @@ async function renderProfile(user) {
   void refreshTopbarAvatar(user);
   await hydrateProfileAvatar(user);
   bindInterfaceLangSelect("profile-lang-select");
+  bindThemeSelect("profile-theme-select");
 
   const fileInput = document.getElementById("profile-avatar-file");
   const msg = document.getElementById("profile-msg");
@@ -2529,6 +2615,9 @@ async function renderKbManage(user, name) {
     saveNameBtn.addEventListener("click", async () => {
       const newName = document.getElementById("kb-name-edit").value.trim();
       if (!newName) return;
+      if (newName !== name && isWebhook) {
+        if (!(await showConfirmDialog(T("renameKbWebhookWarning")))) return;
+      }
       try {
         const res = await fetchJSON(`/api/kb/${encodeURIComponent(name)}`, {
           method: "PATCH",
@@ -2937,7 +3026,7 @@ async function renderSkillPage(user) {
       const u = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = u;
-      a.download = "SKILL.zip";
+      a.download = "bcecli.zip";
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -3042,11 +3131,23 @@ if (restored?.lang === "zh" || restored?.lang === "en") {
     /* ignore */
   }
 }
+if (restored?.theme === "light" || restored?.theme === "dark") {
+  currentTheme = restored.theme;
+} else {
+  try {
+    const ut = localStorage.getItem(UI_THEME_KEY);
+    if (ut === "light" || ut === "dark") currentTheme = ut;
+  } catch {
+    /* ignore */
+  }
+}
 try {
   localStorage.setItem(UI_LANG_KEY, currentLang);
+  localStorage.setItem(UI_THEME_KEY, currentTheme);
 } catch {
   /* ignore */
 }
+applyTheme();
 if (restored?.stagedUploadId) stagedUploadId = restored.stagedUploadId;
 
 render().catch((e) => setStatus(e.message, true));
