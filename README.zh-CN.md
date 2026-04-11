@@ -8,38 +8,37 @@
   <a href="https://github.com/SugarSong404/RAGret/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome" /></a>
 </p>
 
-<p align="center">English documentation · <a href="README.md">README.md</a></p>
+<p align="center">English · <a href="README.md">README.md</a></p>
 
-## 什么是RAGret
+## RAGret 是什么？
 
-`RAGret`(不是regret😂)是一套面向小型团队（15-30人），低成本服务器（显存<=8G）的自托管RAG Web应用。
+`RAGret`（不是 “regret” 后悔 😂）是一款自托管的 RAG 网页应用，面向小型团队（约 15–30 人）与低成本服务器（显存 ≤ 8 GB）。
 
-使用`RAGret`时，团队成员可以发布知识库到广场，或订阅其他成员发布的知识库，并在其后通过GET请求方式查询知识库。
+使用 `RAGret`，团队成员可以把知识库发布到共享中心、订阅他人的知识库，之后通过 HTTP GET 进行检索。
 
-### 核心特点
+### 亮点
 
-- 知识库创建者可设置可见范围，灵活管控访问权限。
-- **智能体**友好，应用提供**api-key**与**SKILL.md**，助力快速接入团队智能体工作流。
-- 支持通过**tar 包上传**或**GitLab / GitHub 仓库 Webhook 触发**的方式接入，便于与团队现有文档存储习惯融合。飞书等在线文档支持也将陆续上线。
-- 多种文件格式支持，**PDF(pdf),Word(docx),XLS(xlsx),Markdown(md),Email(eml),TXT(txt),CSV(csv),Web links(html)** 随意选择
-- 支持中英文双语界面、亮/暗主题切换，以及通过 YAML 文件自定义品牌元素（如 favicon、页面标题）
+- 创建者可设置可见范围，灵活控制访问。
+- **对 Agent 友好**：提供 **API 密钥** 与 **SKILL.md**，便于智能体快速接入团队工作流。
+- 支持通过 **tar 上传** 或 **GitLab / GitHub Webhook** 入库，贴合常见文档存放习惯；飞书等在线文档同步已在规划中。
+- 多格式：**PDF、Word（docx）、Excel（xlsx）、Markdown（md）、邮件（eml）、TXT、CSV、网页链接（html）**。
+- 中英双语界面、浅色 / 深色主题，并可通过 YAML 调整品牌（如 favicon、页面标题）。
 
-### 技术选型
+### 技术栈
 
-索引与检索管线使用 **BCE 向量模型 + SQLite 存储 + BCE 重排序**
-依赖下方仓库与模型
+索引与检索采用 **BCE 嵌入 + SQLite + BCE 重排序**，依赖：
 
-- [BCEmbedding（GitHub）](https://github.com/netease-youdao/BCEmbedding)  
+- [BCEmbedding（GitHub）](https://github.com/netease-youdao/BCEmbedding)
 - [Hugging Face 上的模型](https://huggingface.co/maidalun1020)（`bce-embedding-base_v1`、`bce-reranker-base_v1`）
 
 ## 快速开始
 
-在 **CUDA** 与 **Intel XPU** 中选一种 GPU 方案，在 **本机 Python** 与 **Docker** 中选一种运行方式；
+**GPU 二选一：** **CUDA** 或 **Intel XPU**。**运行方式二选一：** **本机 Python** 或 **Docker**。
 
 **通用说明：**
 
-- 同一环境只使用一种 GPU 栈和一种运行方式。
-- **Hugging Face 镜像（可选）**：下载慢或被墙时，在运行 **`warmup_hf_models.py`** 或 **`docker build`** 前设置 **`HF_ENDPOINT`**（见下）。
+- 每个环境只使用一种 GPU 方案与一种运行方式。
+- **Hugging Face 镜像（可选）：** 若下载慢或被墙，在运行 **`warmup_hf_models.py`** 或 **`docker build`** 之前设置 **`HF_ENDPOINT`**（见下）。
 
 ```bash
 # Windows PowerShell
@@ -49,41 +48,42 @@ $env:HF_ENDPOINT = "https://hf-mirror.com"
 export HF_ENDPOINT=https://hf-mirror.com
 ```
 
-### 环境搭建
+### 环境准备
 
 #### 本机 Python
 
-1. **Python 3.10+**（已在 3.12 上测试），新建 venv 或 conda 环境。
-2. **按 GPU 安装 PyTorch（二选一）：**
-   - **NVIDIA CUDA**：参考 **[Start Locally](https://pytorch.org/get-started/locally/)**，或例如  
+1. **Python 3.10+**（已在 3.12 上测试）。创建 venv 或 conda 环境。
+2. **按你的 GPU 安装 PyTorch（二选一）：**
+   - **NVIDIA CUDA：** 按 **[Start Locally](https://pytorch.org/get-started/locally/)** 安装，或例如：  
      `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124`
-   - **Intel XPU**：参考 **[Intel GPU 入门](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html)**，安装 [Intel GPU 驱动](https://www.intel.com/content/www/us/en/developer/articles/tool/pytorch-prerequisites-for-intel-gpu.html) 后例如  
-     `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/xpu`  
+   - **Intel XPU：** 按 **[Get started with Intel GPU](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html)**。安装 [Intel GPU 驱动](https://www.intel.com/content/www/us/en/developer/articles/tool/pytorch-prerequisites-for-intel-gpu.html) 后，例如：  
+     `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/xpu`
 3. **应用依赖：** `pip install -r requirements.txt`
-4. **模型（在索引/检索前做一次）**：在**仓库根目录**、联网执行：
+4. **模型（首次，在索引/检索之前）：** 在**仓库根目录**联网执行：
 
    ```bash
    python warmup_hf_models.py
    ```
 
-   权重会落到 **`./models`**。也可自行下载BCE权重复制到 **`./models`**
+   权重会下载到 **`./models`**。也可手动将 BCE 权重放入 **`./models`**。
 
-5.**校验GPU环境：**
-    - CUDA：`python -c "import torch; print(torch.cuda.is_available())"` → `True`
-    - XPU：`python -c "import torch; print(torch.xpu.is_available())"` → `True`
-  在 **Intel XPU** 上，仅 **embedding** 走 GPU；因为上游仓库`BCEmbedding`的**rerank**不支持**XPU**。
+5. **验证 GPU：**
+   - CUDA：`python -c "import torch; print(torch.cuda.is_available())"` → 应输出 `True`
+   - XPU：`python -c "import torch; print(torch.xpu.is_available())"` → 应输出 `True`
+
+   在 **Intel XPU** 上，仅 **嵌入（embedding）** 使用 GPU；上游 **BCEmbedding** 的 **重排序（rerank）** **不支持 XPU**。
 
 ---
 
 #### Docker（仅 CUDA）
 
-本仓库的 Docker 仅针对 **CUDA**（`Dockerfile`）。若使用 Intel XPU，请走上面的 **本机 Python**。
+本仓库镜像仅针对 **CUDA**（`Dockerfile`）。若使用 Intel XPU，请用上面的**本机 Python** 方式。
 
-构建（构建阶段会把权重预热到镜像内的 **`/opt/hf`**）：
+构建（warmup 会把权重打进镜像内的 **`/opt/hf`**）：
 
 ```bash
 docker build -t ragret .
-# 国内镜像，使用时请不要打开代理
+# 国内镜像；使用时请关闭代理
 docker build -t ragret --build-arg HF_ENDPOINT=https://hf-mirror.com .
 ```
 
@@ -95,82 +95,91 @@ docker run --name ragret -it --gpus all -p 8765:8765 ragret
 
 ### 启动服务
 
-先前往`frontend`目录，运行
+在 `frontend` 目录：
 
 ```bash
 npm run build
 ```
 
-在根目录下执行
+在仓库根目录：
 
 ```bash
 python ragret.py serve --host 0.0.0.0 --port 8765
 ```
 
-## 用户说明
+## 使用说明
 
-### 偏好与凭证
+### 偏好与凭据
 
-前往 **账户** 界面：
+打开 **账户（Account）**：
+
 ![account](assets/screenshot_account.png)
-1.可对头像、主题色与语言进行切换
-2.您可以创建至多3个api-key，用于查询您创建或订阅的知识库
-3.如果需要激活GitHub或GitLab的webhook功能，请在对应的位置填入您的PAT，为了安全起见，建议设置您的PAT权限为**仓库只读**
 
-### 创建你的知识库
+1. 修改头像、主题与语言。
+2. 最多创建 **3 个 API 密钥**，用于检索你拥有或已订阅的知识库。
+3. 若使用 GitHub 或 GitLab Webhook，在对应栏粘贴 **PAT**。为安全起见，请将 PAT 权限限定为**只读仓库**。
 
-前往 **添加知识库**界面：
+### 创建知识库
+
+打开 **添加知识库（Add knowledge base）**：
+
 ![add](assets/screenshot_add.png)
-1.**必须**填入您的知识库名称与描述，这有助于智能体选择正确的知识库
-2.选择性填入知识库描述文件（README）与知识库图片
-3.设置您的知识库访问权限，选择上锁默认**仅创建者可见**，您可以在构建后向其中添加成员
-4.选择知识库类型，**tar文件上传**不做赘述， **webhook模式**见下方图片
+
+1. **必填：** 名称与描述，便于 Agent 选对知识库。
+2. 可选：类 README 的描述文件与封面图。
+3. 设置可见性。**锁定（Locked）** 默认仅**创建者**可见；创建后可添加成员。
+4. 选择类型。**Tar 上传**较直接；**Webhook** 见下图。
+
 ![webhook](assets/screenshot_webhook.png)
-首次构建将从仓库直接拉取文件，所以填入仓库地址与分支是必要的
-复制**Webhook URL**与**Secret Token**到对应仓库的Webhook创建部分进行添加
-完成后点击构建按钮
 
-### 查看进行中的任务
+首次构建会从仓库拉取，因此 **仓库 URL** 与 **分支** 为必填。将 **Webhook URL** 与 **Secret Token** 复制到仓库的 Webhook 设置中，然后点击构建。
 
-由于这是低成本服务器，所以文档切片与建库需要排队进行，每当点击构建或Webhook触发，都将注册为一个任务显示在任务列表
-前往 **任务列表**界面：
-您可以见到所有正在排队与运行中的任务
+### 进行中的任务
+
+在普通硬件上，分块与索引会排队。每次点击构建或 Webhook 触发都会注册一个任务。
+
+打开 **任务列表（Task list）** 查看排队与运行中的任务：
+
 ![task](assets/screenshot_task.png)
-如有需要请随时取消它们
+
+需要时可取消任务。
+
 ![Tdetail](assets/screenshot_Tdetail.png)
 
-### 管理您的知识库
+### 管理你的知识库
 
-前往 **我的知识库**界面：
-您可以见到所有您创建或订阅的知识库，点击您需要管理的知识库
-大多功能不多赘述，有以下注意点：
-1.如果是Webhook类型的知识库，在您变更知识库名称后请前往对应仓库修改Webhook链接
-2.无论什么类型的知识库，重构建都是**基于变更**的，如果您需要以**tar类型**添加文件，应该添加**整个文档集**的压缩包
-3.Webhook类型的知识库可以在该页面主动拉取仓库
+打开 **我的知识库（My knowledge bases）**，选择一个进行管理。
+
+注意：
+
+1. 对 **Webhook** 类型知识库，若重命名知识库，请在仓库中更新 Webhook URL。
+2. 所有类型的**重建均为增量**。若通过 **tar** 添加文件，请上传你希望被索引的**完整文档集**的压缩包。
+3. Webhook 类型可在此页手动从仓库拉取。
+
 ![rebuild](assets/screenshot_rebuild.png)
-4.您可以通过最下方的搜索功能直接测试知识库检索
+
+4. 使用页面底部搜索框可针对该知识库试检索。
 
 ### 使用知识库
 
-1.在**知识库广场**界面对需要使用的知识库进行订阅
-2.在**账户** 界面获取api-key
-3.设置环境变量**RAGRET_API_KEY**
+1. 在 **知识中心（Knowledge hub）** 订阅。
+2. 在 **账户** 中复制 API 密钥。
+3. 设置环境变量 **`RAGRET_API_KEY`**。
 
-**GET请求:**
+**GET 请求示例：**
 
 ```bash
-# 列出可用知识库
+# 列出已订阅的索引
 curl -sS -H "X-API-Key: $RAGRET_API_KEY" "$BASE/api/subscribe-indexes"
-# 查询
+# 检索
 curl -sS -G "$BASE/api/search/INDEX_NAME" -H "X-API-Key: $RAGRET_API_KEY" --data-urlencode "query=…"
-```  
+```
 
-**导入Agent:**
-下载SKILL.md，导入claude code, cursor, openclaw或一系列其他Agent
+**智能体：** 下载 `SKILL.md` 并导入 Claude Code、Cursor、OpenClaw 或其他 Agent 工具。
 
-## TODO
+## 路线图
 
-1.支持更多文件格式，如表格，PPT，图片
-2.支持飞书等在线文档的同步
-3.支持分布式，面对高并发情景，扩大支持的团队规模
-4.修复一系列不稳定的问题
+1. 更多格式：表格、PPT、图片。
+2. 与飞书等在线文档同步。
+3. 分布式部署，以支持更高并发与更大团队。
+4. 全栈稳定性改进。
