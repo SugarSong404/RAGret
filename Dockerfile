@@ -8,14 +8,19 @@
 # Slow HF from China, set at build time:
 #   docker build -t ragret --build-arg HF_ENDPOINT=https://hf-mirror.com .
 #
+# Skip baking models into the image; at run time mount a host Hugging Face cache
+# (same layout as local ./models after python warmup_hf_models.py) onto /opt/hf:
+#   docker build -t ragret --build-arg RAGRET_SKIP_WARMUP=1 .
+#   docker run -it --gpus all -v /path/on/host/models:/opt/hf ragret
+#
 # If Docker Hub is slow, override the base (example mirror — verify URL still works):
 #   docker build -t ragret --build-arg PYTORCH_IMAGE=docker.m.daocloud.io/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime .
 #
 # Run (GPU):
-#   docker run --rm -it --gpus all ragret
+#   docker run -it --gpus all ragret
 #
 # Persistent data (default paths under /app/runtime):
-#   docker run --rm -it --gpus all -v ragret-runtime:/app/runtime ragret
+#   docker run -it --gpus all -v ragret-runtime:/app/runtime ragret
 #
 # Inside the shell:
 #   python ragret.py index --dir /data/corpus --register-as myindex
@@ -31,6 +36,8 @@ ARG PYTORCH_IMAGE=pytorch/pytorch:2.10.0-cuda13.0-cudnn9-runtime
 FROM ${PYTORCH_IMAGE}
 
 ARG HF_ENDPOINT=https://huggingface.co
+# Set to 1 to skip warmup_hf_models.py at build (use a host-mounted HF cache at /opt/hf).
+ARG RAGRET_SKIP_WARMUP=0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
@@ -41,6 +48,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     less \
     nano \
+    nodejs \
+    npm \
     procps \
     unzip \
     vim-tiny \
@@ -62,31 +71,21 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Base image uses PEP 668 "externally managed" Python; allow pip in this image only.
 # Base image already ships torch/torchvision with CUDA; do not reinstall CPU wheels.
+COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
-        "numpy>=1.24" \
-        "pydantic>=2" \
-        langchain-core \
-        langchain-community \
-        langchain-huggingface \
-        langchain-text-splitters \
-        BCEmbedding \
-        "sentencepiece>=0.1.99" \
-        "protobuf>=3.20" \
-        pypdf
+    pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Bake embedding + reranker weights into the image so first index/search does not re-download.
-RUN mkdir -p /opt/hf && python /app/warmup_hf_models.py
+# Bake embedding + reranker weights into the image unless RAGRET_SKIP_WARMUP=1 (then mount /opt/hf).
+RUN mkdir -p /opt/hf && \
+    if [ "$RAGRET_SKIP_WARMUP" != "1" ]; then python /app/warmup_hf_models.py; fi
 
 RUN printf '%s\n' \
     'if [ -d /app ]; then cd /app; fi' \
     'alias ll="ls -la"' \
     '# RAGret: python ragret.py -h | index | search | serve' \
     >> /root/.bashrc
-
-EXPOSE 8765
 
 EXPOSE 8765
 

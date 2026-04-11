@@ -93,11 +93,19 @@ docker build -t ragret --build-arg HF_ENDPOINT=https://hf-mirror.com .
 docker run --name ragret -it --gpus all -p 8765:8765 ragret
 ```
 
+也可以将 model 下载到宿主机上，以下方式跳过 warmup 快速启动容器
+
+```bash
+docker build -t ragret --build-arg RAGRET_SKIP_WARMUP=1 .
+docker run --name ragret -it --gpus all -p 8765:8765 -v /path/on/host/models:/opt/hf ragret
+```
+
 ### 启动服务
 
 在 `frontend` 目录：
 
 ```bash
+npm install
 npm run build
 ```
 

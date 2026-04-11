@@ -93,11 +93,19 @@ Run with **`--gpus all`** (or `'--gpus "device=0"'`).
 docker run --name ragret -it --gpus all -p 8765:8765 ragret
 ```
 
+You can also download the model to the host machine and start the container quickly by skipping warmup as follows:
+
+```bash
+docker build -t ragret --build-arg RAGRET_SKIP_WARMUP=1 .
+docker run --name ragret -it --gpus all -p 8765:8765 -v /path/on/host/models:/opt/hf ragret
+```
+
 ### Start the server
 
 From the `frontend` directory:
 
 ```bash
+npm install
 npm run build
 ```
 
