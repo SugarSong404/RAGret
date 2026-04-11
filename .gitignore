@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+ragret_registry.json
+runtime/
+# Local BCE / Hugging Face weights (default cache; large)
+models/
+.DS_Store
+frontend/node_modules/
+upload/
+.ragret_uploads/
+data/
+ragret/static/
