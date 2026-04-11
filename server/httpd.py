@@ -22,9 +22,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from bcecli.registry import IndexRegistry, safe_index_name, safe_sqlite_basename
+from ragret.registry import IndexRegistry, safe_index_name
 
 from server.archive_util import is_tar_archive_filename, safe_extract_tar_archive
+from server.data_cleanup import cleanup_orphan_kb_sqlite_files
 from server.build_queue import (
     cleanup_upload_staging,
     is_http_git_clone_url,
@@ -32,12 +33,13 @@ from server.build_queue import (
     wake_build_worker,
 )
 from server.passwords import hash_password
+from server.runtime_paths import default_registry_path, kb_sqlite_path, runtime_upload_dir
 from server.store import create_app_store
 from server.store.protocol import AppStore, KBRecord
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-_SESSION_TTL_SECONDS = int(os.environ.get("BCECLI_SESSION_TTL", str(30 * 24 * 3600)))
+_SESSION_TTL_SECONDS = int(os.environ.get("RAGRET_SESSION_TTL", str(30 * 24 * 3600)))
 _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,64}$")
 
 _UPLOAD_ID_RE = re.compile(r"^[a-f0-9]{24}$")
@@ -75,10 +77,10 @@ def _unwrap_github_logged_payload(data: dict[str, Any]) -> dict[str, Any]:
     except (json.JSONDecodeError, ValueError):
         return data
     return inner if isinstance(inner, dict) else data
-_AVATAR_MAX_BYTES = int(os.environ.get("BCECLI_AVATAR_MAX_BYTES", str(2 * 1024 * 1024)))
+_AVATAR_MAX_BYTES = int(os.environ.get("RAGRET_AVATAR_MAX_BYTES", str(2 * 1024 * 1024)))
 _ALLOWED_AVATAR_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
 def _best_public_host() -> str:
-    env = str(os.environ.get("BCECLI_PUBLIC_HOST") or "").strip()
+    env = str(os.environ.get("RAGRET_PUBLIC_HOST") or "").strip()
     if env:
         return env
     try:
@@ -133,10 +135,10 @@ def _job_public_view(job: dict[str, Any]) -> dict[str, Any]:
 
 
 def _registry_path(root: Path) -> Path:
-    env = os.environ.get("BCECLI_REGISTRY")
+    env = os.environ.get("RAGRET_REGISTRY")
     if env:
         return Path(env).expanduser().resolve()
-    return (root / "bcecli_registry.json").resolve()
+    return default_registry_path(root)
 
 
 def _bearer_raw(handler: BaseHTTPRequestHandler) -> str:
@@ -157,7 +159,7 @@ def _api_key_raw(handler: BaseHTTPRequestHandler) -> str:
 
 
 def _api_super_token() -> str | None:
-    t = os.environ.get("BCECLI_API_TOKEN")
+    t = os.environ.get("RAGRET_API_TOKEN")
     return t.strip() if t else None
 
 
@@ -256,10 +258,10 @@ def _serialize_kb(rec: KBRecord) -> dict[str, Any]:
 
 
 def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore):
-    static_dir = (root / "bcecli" / "static").resolve()
-    upload_base = (root / "upload").resolve()
+    static_dir = (root / "ragret" / "static").resolve()
+    upload_base = runtime_upload_dir(root)
 
-    class BcecliHTTPRequestHandler(BaseHTTPRequestHandler):
+    class RagretHTTPRequestHandler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:
             sys.stderr.write("%s - - [%s] %s\n" % (self.client_address[0], self.log_date_time_string(), fmt % args))
 
@@ -272,7 +274,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 _send_json(
                     self,
                     401,
-                    {"ok": False, "error": "Login required (session token) or BCECLI_API_TOKEN"},
+                    {"ok": False, "error": "Login required (session token) or RAGRET_API_TOKEN"},
                 )
                 return None
             return k, uid
@@ -606,7 +608,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
             if not parts:
                 if self._serve_static_file("index.html"):
                     return
-                _send_json(self, 200, {"service": "bcecli", "api": "/api/…", "auth": "/api/auth/login"})
+                _send_json(self, 200, {"service": "ragret", "api": "/api/…", "auth": "/api/auth/login"})
                 return
 
             if parts[0].lower() == "health" and len(parts) == 1:
@@ -707,14 +709,14 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     raw = p.read_bytes()
                     buf = io.BytesIO()
                     with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-                        zf.writestr("bcecli/SKILL.md", raw)
+                        zf.writestr("ragret/SKILL.md", raw)
                     body = buf.getvalue()
                 except OSError as e:
                     _send_json(self, 500, {"ok": False, "error": str(e)})
                     return
                 self.send_response(200)
                 self.send_header("Content-Type", "application/zip")
-                self.send_header("Content-Disposition", 'attachment; filename="bcecli.zip"')
+                self.send_header("Content-Disposition", 'attachment; filename="ragret.zip"')
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -726,7 +728,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     200,
                     {
                         "ok": True,
-                        "service": "bcecli",
+                        "service": "ragret",
                         "endpoints": {
                             "auth": "POST /api/auth/register | /api/auth/login | /api/auth/logout",
                             "list": "GET /api/indexes",
@@ -1024,7 +1026,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 )
                 return
 
-            from bcecli.rag import search_db
+            from ragret.rag import search_db
 
             try:
                 result = search_db(
@@ -1121,7 +1123,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     if op_q == "create":
                         app_store.delete_knowledge_base(kb_n)
                         registry.remove(kb_n)
-                        fd = (root / "data" / f"{safe_sqlite_basename(kb_n)}.sqlite").resolve()
+                        fd = kb_sqlite_path(root, kb_n)
                         try:
                             if fd.is_file():
                                 fd.unlink()
@@ -1930,9 +1932,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 wh_prov = webhook_provider or "gitlab"
                 if wh_prov not in ("gitlab", "github"):
                     wh_prov = "gitlab"
-                final_sqlite = str(
-                    ((root / "data" / f"{safe_sqlite_basename(index_name)}.sqlite").resolve())
-                )
+                final_sqlite = str(kb_sqlite_path(root, index_name))
                 try:
                     app_store.create_pending_knowledge_base(
                         name=index_name,
@@ -2009,9 +2009,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     )
                     return
                 op = "create"
-                final_sqlite = str(
-                    ((root / "data" / f"{safe_sqlite_basename(index_name)}.sqlite").resolve())
-                )
+                final_sqlite = str(kb_sqlite_path(root, index_name))
                 try:
                     app_store.create_pending_knowledge_base(
                         name=index_name,
@@ -2160,14 +2158,14 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
             _send_bytes(self, 200, candidate.read_bytes(), ctype or "application/octet-stream")
             return True
 
-    return BcecliHTTPRequestHandler
+    return RagretHTTPRequestHandler
 
 
 def run_server(*, host: str, port: int, repo_root: Path | None = None) -> int:
     os.environ.setdefault("HF_ENDPOINT", "https://huggingface.co")
     root = (repo_root or REPO_ROOT).resolve()
     if "HF_HOME" not in os.environ:
-        from bcecli.paths import default_hf_models_dir
+        from ragret.paths import default_hf_models_dir
 
         d = default_hf_models_dir()
         os.environ["HF_HOME"] = str(d)
@@ -2178,7 +2176,11 @@ def run_server(*, host: str, port: int, repo_root: Path | None = None) -> int:
     registry.load()
     app_store = create_app_store(root)
 
-    upload_base = (root / "upload").resolve()
+    n_orphan = cleanup_orphan_kb_sqlite_files(root, registry=registry, app_store=app_store)
+    if n_orphan:
+        print(f"Removed {n_orphan} orphan KB sqlite file(s) under runtime/data or legacy data/.", flush=True)
+
+    upload_base = runtime_upload_dir(root)
     start_global_build_worker(
         root=root,
         registry=registry,
@@ -2191,7 +2193,7 @@ def run_server(*, host: str, port: int, repo_root: Path | None = None) -> int:
     server = ThreadingHTTPServer((host, int(port)), handler_cls)
     db_path = getattr(app_store, "_path", None)
     extra = f" app_db={db_path}" if db_path is not None else ""
-    print(f"bcecli server http://{host}:{port}/  registry={reg_path}{extra}", flush=True)
+    print(f"ragret server http://{host}:{port}/  registry={reg_path}{extra}", flush=True)
     print(
         "API: auth /api/auth/* | GET /api/indexes | GET /api/kb/{name} | "
         "GET /api/search/{index}?query=... | POST/DELETE /api/indexes",

@@ -93,9 +93,9 @@ def patch_bce_embedding_reranker_tokenize() -> None:
     import BCEmbedding.models.reranker as rerank_mod
     import BCEmbedding.models.utils as utils_mod
 
-    if getattr(utils_mod, "_bcecli_rerank_tokenize_patched", False):
+    if getattr(utils_mod, "_ragret_rerank_tokenize_patched", False):
         return
 
     utils_mod.reranker_tokenize_preproc = reranker_tokenize_preproc
     rerank_mod.reranker_tokenize_preproc = reranker_tokenize_preproc
-    utils_mod._bcecli_rerank_tokenize_patched = True
+    utils_mod._ragret_rerank_tokenize_patched = True

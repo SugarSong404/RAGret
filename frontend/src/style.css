@@ -117,21 +117,72 @@ body.auth-page .global-status {
   right: 24px;
 }
 
-.auth-title-block {
-  text-align: center;
-  margin-bottom: 28px;
+/* 标题区 + 登录卡作为一整块，在 .auth-screen 中参与垂直/水平居中 */
+.auth-center-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  width: 100%;
   max-width: 420px;
 }
 
-.auth-title-block h1 {
-  margin: 0 0 10px;
-  font-size: 26px;
-  font-weight: 700;
+.auth-title-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
 }
 
-.auth-title-block .muted {
+/* 主标题文字相对页面水平轴居中；图标绝对定位在标题左侧，不占用居中宽度 */
+.auth-title-line {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.auth-title-anchor {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.auth-title-anchor--with-logo .auth-logo-wrap {
+  position: absolute;
+  right: 100%;
+  margin-right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-title-anchor--with-logo .auth-logo {
+  display: block;
+  max-width: 30px;
+  max-height: 30px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.auth-title-heading {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.auth-title-sub {
   margin: 0;
   font-size: 15px;
+  text-align: center;
+  width: 100%;
 }
 
 .auth-card {

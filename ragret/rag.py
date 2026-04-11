@@ -1,7 +1,7 @@
 """SQLite-backed BCE embeddings, chunk store, dense retrieval + rerank."""
 from __future__ import annotations
 
-import bcecli.compat  # noqa: F401 — multiprocess patch before torch / langchain
+import ragret.compat  # noqa: F401 — multiprocess patch before torch / langchain
 
 import hashlib
 import json
@@ -31,16 +31,16 @@ try:
 except ImportError:
     from langchain_community.embeddings import HuggingFaceEmbeddings
 
-from bcecli.paths import default_hf_models_dir, resolve_hf_snapshot_dir
-from bcecli.rerank import BcecliBCERerank
+from ragret.paths import default_hf_models_dir, resolve_hf_snapshot_dir
+from ragret.rerank import RagretBCERerank
 
 EMBEDDING_MODEL = "maidalun1020/bce-embedding-base_v1"
 RERANKER_MODEL = "maidalun1020/bce-reranker-base_v1"
 EMBED_BATCH_SIZE = 8
 
 # HTTP search: reuse models + SQLite snapshot per path (see search_db).
-_SEARCH_INDEX_CACHE_MAX = int(os.environ.get("BCECLI_SEARCH_INDEX_CACHE_MAX", "64"))
-_SEARCH_RERANK_CACHE_TOP = max(8, int(os.environ.get("BCECLI_SEARCH_RERANK_CACHE_TOP", "256")))
+_SEARCH_INDEX_CACHE_MAX = int(os.environ.get("RAGRET_SEARCH_INDEX_CACHE_MAX", "64"))
+_SEARCH_RERANK_CACHE_TOP = max(8, int(os.environ.get("RAGRET_SEARCH_RERANK_CACHE_TOP", "256")))
 
 _search_runtime_lock = threading.RLock()
 _search_embed_models: dict[str, Any] = {}
@@ -81,8 +81,8 @@ def _prog(msg: str) -> None:
 def _hf_weights_hint() -> str:
     return (
         "BCE weights are missing on disk. "
-        f"HF_HOME (where bcecli looks): {os.environ.get('HF_HOME', '')}. "
-        "From the bcecli repo root with network run: python warmup_hf_models.py "
+        f"HF_HOME (where ragret looks): {os.environ.get('HF_HOME', '')}. "
+        "From the RAGret repo root with network run: python warmup_hf_models.py "
         "(or set HF_HOME to the directory that already contains the Hub cache)."
     )
 
@@ -303,12 +303,12 @@ def _embed_documents_with_progress(
     return out
 
 
-def make_reranker(device: str, top_n: int) -> BcecliBCERerank:
+def make_reranker(device: str, top_n: int) -> RagretBCERerank:
     dev = str(device)
     rerank_dev = "cpu" if dev.lower().startswith("xpu") else dev
     use_fp16 = rerank_dev.startswith("cuda") and torch.cuda.is_available()
     local = _local_snapshot_path_or_fail(RERANKER_MODEL, "BCE reranker")
-    return BcecliBCERerank(
+    return RagretBCERerank(
         model=local,
         top_n=top_n,
         device=rerank_dev,
@@ -326,12 +326,12 @@ def _xpu_available() -> bool:
 
 
 def resolve_device() -> str:
-    """Pick compute device: env BCECLI_DEVICE, else CUDA, else Intel XPU. CPU is not supported."""
-    override = (os.environ.get("BCECLI_DEVICE") or "").strip()
+    """Pick compute device: env RAGRET_DEVICE, else CUDA, else Intel XPU. CPU is not supported."""
+    override = (os.environ.get("RAGRET_DEVICE") or "").strip()
     if override:
         if override.lower() == "cpu":
             raise RuntimeError(
-                "bcecli does not support a CPU backend; use an NVIDIA GPU (CUDA) or "
+                "ragret does not support a CPU backend; use an NVIDIA GPU (CUDA) or "
                 "Intel GPU (torch.xpu). See README (Dockerfile / Dockerfile.xpu).",
             )
         return override
@@ -349,7 +349,7 @@ def resolve_device() -> str:
 def _require_non_cpu_device(device: str) -> None:
     if str(device).strip().lower() == "cpu":
         raise RuntimeError(
-            "bcecli does not support device='cpu'; use CUDA or Intel XPU (see README).",
+            "ragret does not support device='cpu'; use CUDA or Intel XPU (see README).",
         )
 
 
@@ -669,7 +669,7 @@ def _load_index(conn: sqlite3.Connection) -> tuple[np.ndarray, list[dict[str, An
     ).fetchall()
     if not rows:
         raise ValueError(
-            "Index is empty. Build it first: python bcecli.py index --dir <path>.",
+            "Index is empty. Build it first: python ragret.py index --dir <path>.",
         )
     dim = _get_meta(conn, "embed_dim")
     if not dim:

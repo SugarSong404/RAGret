@@ -10,7 +10,8 @@ venv
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
-bcecli_registry.json
+ragret_registry.json
+runtime
 hq_test
 sample_docs
 data

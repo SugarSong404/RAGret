@@ -18,12 +18,13 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 
-from bcecli.rag import BuildCancelledError, index_workdir, try_incremental_update_workdir
-from bcecli.registry import IndexRegistry, safe_sqlite_basename
+from ragret.rag import BuildCancelledError, index_workdir, try_incremental_update_workdir
+from ragret.registry import IndexRegistry, safe_sqlite_basename
 from dulwich import porcelain
 from dulwich.errors import NotGitRepository
 
 from server.archive_util import is_tar_archive_filename, safe_extract_tar_archive
+from server.runtime_paths import runtime_data_dir, runtime_webhook_dir
 
 _UPLOAD_ID_RE = re.compile(r"^[a-f0-9]{24}$")
 
@@ -50,13 +51,11 @@ def _gitlab_ref_to_branch(ref: str) -> str:
 
 
 def _webhook_tmp_base(root: Path) -> Path:
-    p = (root / "webhook").resolve()
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    return runtime_webhook_dir(root)
 
 
 def cleanup_webhook_temp_directories(repo_root: Path, *, primary_clone: Path | None = None) -> None:
-    """One cleanup pass: remove primary clone dir (if set), then all bcecli-webhook-* under webhook/ and repo root."""
+    """One cleanup pass: remove primary clone dir (if set), then all ragret-webhook-* under webhook/ and repo root."""
     root_r = repo_root.resolve()
 
     def _rm_tree(path: Path, ctx: str) -> None:
@@ -76,12 +75,12 @@ def cleanup_webhook_temp_directories(repo_root: Path, *, primary_clone: Path | N
                 last_err = e
                 if sys.platform == "win32" and getattr(e, "winerror", None) == 32:
                     continue
-                sys.stderr.write(f"bcecli-webhook-cleanup: rmtree failed ({ctx})\n  path={path}\n  error={e}\n")
+                sys.stderr.write(f"ragret-webhook-cleanup: rmtree failed ({ctx})\n  path={path}\n  error={e}\n")
                 traceback.print_exc(file=sys.stderr)
                 return
         if last_err is not None:
             sys.stderr.write(
-                f"bcecli-webhook-cleanup: rmtree exhausted retries ({ctx})\n  path={path}\n  error={last_err}\n"
+                f"ragret-webhook-cleanup: rmtree exhausted retries ({ctx})\n  path={path}\n  error={last_err}\n"
             )
             traceback.print_exc(file=sys.stderr)
 
@@ -90,16 +89,16 @@ def cleanup_webhook_temp_directories(repo_root: Path, *, primary_clone: Path | N
         if pc.is_dir():
             _rm_tree(pc, "primary webhook clone")
 
-    wb = (root_r / "webhook").resolve()
-    for base, label in ((wb, "webhook/"), (root_r, "repo root")):
+    wb = runtime_webhook_dir(root_r)
+    for base, label in ((wb, "runtime/webhook/"), (root_r, "repo root")):
         try:
             if not base.is_dir():
                 continue
             for child in sorted(base.iterdir()):
-                if child.is_dir() and child.name.startswith("bcecli-webhook-"):
+                if child.is_dir() and child.name.startswith("ragret-webhook-"):
                     _rm_tree(child, f"{label} temp {child.name}")
         except OSError as e:
-            sys.stderr.write(f"bcecli-webhook-cleanup: listdir failed ({label})\n  path={base}\n  error={e}\n")
+            sys.stderr.write(f"ragret-webhook-cleanup: listdir failed ({label})\n  path={base}\n  error={e}\n")
             traceback.print_exc(file=sys.stderr)
 
 
@@ -132,11 +131,11 @@ def _dulwich_clone_auth(repo_url: str, pat: str, *, is_github: bool) -> tuple[st
 def _webhook_git_http_timeout_s() -> tuple[float, float]:
     """(connect_timeout_s, read_timeout_s) for Dulwich HTTP(S) webhook clones."""
     try:
-        connect = float(os.environ.get("BCECLI_GIT_HTTP_CONNECT_TIMEOUT_S", "20"))
+        connect = float(os.environ.get("RAGRET_GIT_HTTP_CONNECT_TIMEOUT_S", "20"))
     except ValueError:
         connect = 20.0
     try:
-        read = float(os.environ.get("BCECLI_GIT_HTTP_READ_TIMEOUT_S", "30"))
+        read = float(os.environ.get("RAGRET_GIT_HTTP_READ_TIMEOUT_S", "30"))
     except ValueError:
         read = 30.0
     return max(1.0, connect), max(5.0, read)
@@ -144,7 +143,7 @@ def _webhook_git_http_timeout_s() -> tuple[float, float]:
 
 def _webhook_git_clone_wall_timeout_s() -> float:
     """Wall-clock cap for the whole Dulwich clone (many HTTP requests). Defaults to read timeout."""
-    raw = os.environ.get("BCECLI_GIT_CLONE_WALL_TIMEOUT_S")
+    raw = os.environ.get("RAGRET_GIT_CLONE_WALL_TIMEOUT_S")
     if raw is not None and str(raw).strip() != "":
         try:
             return max(5.0, float(raw))
@@ -177,8 +176,8 @@ class _WebhookUrllib3Pool:
 def _webhook_clone_pool_manager():
     """urllib3 PoolManager for Dulwich webhook clones: direct connections only.
 
-    Timeouts: BCECLI_GIT_HTTP_CONNECT_TIMEOUT_S, BCECLI_GIT_HTTP_READ_TIMEOUT_S (per HTTP request).
-    Whole-clone wall clock: BCECLI_GIT_CLONE_WALL_TIMEOUT_S (default = read timeout).
+    Timeouts: RAGRET_GIT_HTTP_CONNECT_TIMEOUT_S, RAGRET_GIT_HTTP_READ_TIMEOUT_S (per HTTP request).
+    Whole-clone wall clock: RAGRET_GIT_CLONE_WALL_TIMEOUT_S (default = read timeout).
     """
     try:
         import urllib3
@@ -259,11 +258,11 @@ def _run_dulwich_clone_into(
                 if callable(closer):
                     closer()
         except OSError as e:
-            sys.stderr.write(f"bcecli-webhook-clone: repo close warning\n  path={td}\n  error={e}\n")
+            sys.stderr.write(f"ragret-webhook-clone: repo close warning\n  path={td}\n  error={e}\n")
         gc.collect()
     except Exception as e:
         sys.stderr.write(
-            "bcecli-webhook-clone: clone failed\n"
+            "ragret-webhook-clone: clone failed\n"
             f"  repo_url={repo_url}\n"
             f"  branch={br or '(default)'}\n"
             f"  error={e}\n"
@@ -342,7 +341,7 @@ def _clone_webhook_repo(
     on_clone_tick: Callable[[], None] | None = None,
 ) -> Path:
     wb = _webhook_tmp_base(work_dir)
-    td = Path(tempfile.mkdtemp(prefix="bcecli-webhook-", dir=str(wb)))
+    td = Path(tempfile.mkdtemp(prefix="ragret-webhook-", dir=str(wb)))
     br = str(branch or "").strip()
     if not br:
         shutil.rmtree(td, ignore_errors=True)
@@ -353,7 +352,7 @@ def _clone_webhook_repo(
         proc = ctx.Process(
             target=_webhook_dulwich_clone_child,
             args=(child_conn, str(td.resolve()), repo_url, br, username, password),
-            name="bcecli-dulwich-clone",
+            name="ragret-dulwich-clone",
         )
         proc.start()
         try:
@@ -402,7 +401,7 @@ def _clone_webhook_repo(
     except Exception:
         shutil.rmtree(td, ignore_errors=True)
         raise
-    sys.stderr.write("bcecli-webhook-clone: clone finished\n" f"  path={td}\n")
+    sys.stderr.write("ragret-webhook-clone: clone finished\n" f"  path={td}\n")
     return td
 
 
@@ -485,9 +484,7 @@ def _cleanup_staging(upload_base: Path, upload_id: str) -> None:
 
 
 def _final_sqlite_path(root: Path, kb_name: str) -> Path:
-    data_dir = (root / "data").resolve()
-    data_dir.mkdir(parents=True, exist_ok=True)
-    return (data_dir / f"{safe_sqlite_basename(kb_name)}.sqlite").resolve()
+    return (runtime_data_dir(root) / f"{safe_sqlite_basename(kb_name)}.sqlite").resolve()
 
 
 def run_one_build_job(
@@ -602,7 +599,7 @@ def run_one_build_job(
 
             bump("git_clone", 8, "cloning remote… 0s")
             sys.stderr.write(
-                "bcecli-webhook-clone: start\n"
+                "ragret-webhook-clone: start\n"
                 f"  kb_name={kb_name}\n"
                 f"  repo_url={repo_url}\n"
                 f"  branch={branch or 'main->master'}\n"
@@ -637,7 +634,7 @@ def run_one_build_job(
 
         if task_kind == "webhook" and extract_dir is not None:
             sys.stderr.write(
-                "bcecli-webhook-index: starting\n"
+                "ragret-webhook-index: starting\n"
                 f"  extract_dir={extract_dir}\n"
                 f"  op={op}\n",
             )
@@ -791,7 +788,7 @@ def run_one_build_job(
             building_path.unlink(missing_ok=True)
     except Exception as e:
         sys.stderr.write(
-            "bcecli-build-job: failed\n"
+            "ragret-build-job: failed\n"
             f"  job_id={job_id}\n"
             f"  kb_name={kb_name}\n"
             f"  task_kind={task_kind}\n"
@@ -868,7 +865,7 @@ def global_build_worker_loop(
                 upload_base=upload_base,
             )
         except Exception:
-            sys.stderr.write("bcecli-build-queue: unhandled error:\n")
+            sys.stderr.write("ragret-build-queue: unhandled error:\n")
             traceback.print_exc(file=sys.stderr)
             time.sleep(1.0)
 
@@ -890,7 +887,7 @@ def start_global_build_worker(
             "upload_base": upload_base,
             "stop_event": stop,
         },
-        name="bcecli-build-queue",
+        name="ragret-build-queue",
         daemon=True,
     )
     t.start()

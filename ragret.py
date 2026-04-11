@@ -1,9 +1,13 @@
-"""Allow ``python -m bcecli`` from repo root (same as ``python bcecli.py``)."""
+"""
+RAGret — CLI entry (thin shim).
+
+Implementation: ``ragret`` (index/search/RAG), ``server`` (HTTP ``serve``), …
+"""
 from __future__ import annotations
 
 import sys
 
-from bcecli.cli import main
+from ragret.cli import main
 
 if __name__ == "__main__":
     try:

@@ -10,7 +10,7 @@ def patch_multiprocess_resource_tracker_py312() -> None:
         from multiprocess.resource_tracker import ResourceTracker
     except ImportError:
         return
-    if getattr(ResourceTracker, "_bcecli_py312_fixed", False):
+    if getattr(ResourceTracker, "_ragret_py312_fixed", False):
         return
 
     def _stop_locked(
@@ -38,7 +38,7 @@ def patch_multiprocess_resource_tracker_py312() -> None:
         self._pid = None
 
     ResourceTracker._stop_locked = _stop_locked  # type: ignore[assignment]
-    ResourceTracker._bcecli_py312_fixed = True
+    ResourceTracker._ragret_py312_fixed = True
 
 
 patch_multiprocess_resource_tracker_py312()

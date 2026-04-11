@@ -118,11 +118,25 @@ class IndexRegistry:
             )
         return out
 
+    def all_registered_db_paths(self) -> list[Path]:
+        with self._lock:
+            self.load()
+            out: list[Path] = []
+            for rec in self._indexes.values():
+                raw = str(rec.get("db_path", "")).strip()
+                if not raw:
+                    continue
+                try:
+                    out.append(Path(raw).expanduser().resolve())
+                except OSError:
+                    continue
+            return out
+
 
 def safe_sqlite_basename(name: str) -> str:
     name = name.strip()
     name = re.sub(r'[<>:"/\\|?*]', "_", name)
-    return name or "bcecli_index"
+    return name or "ragret_index"
 
 
 def resolve_db_path(work_path: Path, name: str | None) -> tuple[Path, Path]:

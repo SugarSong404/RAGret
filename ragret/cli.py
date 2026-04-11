@@ -12,9 +12,9 @@ def main() -> int:
     os.environ.setdefault("HF_ENDPOINT", "https://huggingface.co")
 
     p = argparse.ArgumentParser(
-        prog="bcecli",
+        prog="ragret",
         description=(
-            "bcecli — local RAG index (BCE embedding + rerank) stored in SQLite. "
+            "RAGret — local RAG index (BCE embedding + rerank) stored in SQLite. "
             "Subcommands: serve (HTTP API)."
         ),
     )
@@ -30,12 +30,12 @@ def main() -> int:
         "--registry",
         type=Path,
         default=None,
-        help="Registry JSON path (default: ./bcecli_registry.json or env BCECLI_REGISTRY)",
+        help="Registry JSON path (default: ./runtime/ragret_registry.json or env RAGRET_REGISTRY)",
     )
 
     args = p.parse_args()
     if args.registry is not None:
-        os.environ["BCECLI_REGISTRY"] = str(args.registry.expanduser().resolve())
+        os.environ["RAGRET_REGISTRY"] = str(args.registry.expanduser().resolve())
     from server import run_server
 
     return run_server(host=args.host, port=args.port, repo_root=REPO_ROOT)

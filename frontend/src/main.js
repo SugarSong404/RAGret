@@ -1,9 +1,11 @@
-const AUTH_TOKEN_KEY = "bcecli.auth.token";
-const STATE_KEY = "bcecli.frontend.state.v3";
+import { loadUiConfig, uiConfig } from "./ui_config.js";
+
+const AUTH_TOKEN_KEY = "ragret.auth.token";
+const STATE_KEY = "ragret.frontend.state.v3";
 /** Persisted interface language (mirrored from state for stable preference). */
-const UI_LANG_KEY = "bcecli.ui.lang";
+const UI_LANG_KEY = "ragret.ui.lang";
 /** Persisted UI theme: "dark" | "light" (mirrored for early paint). */
-const UI_THEME_KEY = "bcecli.ui.theme";
+const UI_THEME_KEY = "ragret.ui.theme";
 /** Served from Vite `public/` → static root */
 const DEFAULT_AVATAR_URL = "/default-avatar.svg";
 const DEFAULT_KB_ICON_URL = "/default-kb.svg";
@@ -103,7 +105,6 @@ const KB_LOCK = "\u{1F512}";
 
 const i18n = {
   en: {
-    appTitle: "bce-cli Knowledge Console",
     loginTitle: "Sign in",
     registerTitle: "Create account",
     username: "Username",
@@ -322,7 +323,6 @@ const i18n = {
     saveNewPassword: "Save",
   },
   zh: {
-    appTitle: "bce-cli 知识库",
     loginTitle: "登录",
     registerTitle: "注册",
     username: "用户名",
@@ -1321,13 +1321,23 @@ function bindUploadForm() {
 }
 
 async function renderLogin(register) {
+  const loginLogo = uiConfig.login_logo_url
+    ? `<div class="auth-logo-wrap" aria-hidden="true"><img class="auth-logo" src="${esc(uiConfig.login_logo_url)}" alt="" /></div>`
+    : "";
+  const anchorClass = loginLogo ? "auth-title-anchor auth-title-anchor--with-logo" : "auth-title-anchor";
   appEl.innerHTML = `
     <div class="auth-screen" style="position:relative">
-      <div class="auth-title-block">
-        <h1>${esc(T("appTitle"))}</h1>
-        <p class="muted">${esc(register ? T("registerTitle") : T("loginTitle"))}</p>
-      </div>
-      <main class="auth-card card">
+      <div class="auth-center-stack">
+        <div class="auth-title-block">
+          <div class="auth-title-line">
+            <div class="${anchorClass}">
+              ${loginLogo}
+              <h1 class="auth-title-heading">${esc(uiConfig.login_title)}</h1>
+            </div>
+          </div>
+          <p class="muted auth-title-sub">${esc(register ? T("registerTitle") : T("loginTitle"))}</p>
+        </div>
+        <main class="auth-card card">
         <p id="auth-error" class="error small auth-error-line" hidden></p>
         <form id="auth-form">
           <label><span>${esc(T("username"))}</span><input id="auth-user" autocomplete="username" required /></label>
@@ -1335,13 +1345,14 @@ async function renderLogin(register) {
           <button type="submit">${esc(register ? T("createAccount") : T("signIn"))}</button>
         </form>
         <p class="muted small auth-toggle-wrap"><a href="#" id="auth-toggle">${esc(register ? T("haveAccount") : T("needAccount"))}</a></p>
-      </main>
+        </main>
+      </div>
     </div>
   `;
   const errEl = document.getElementById("auth-error");
-  const flash = sessionStorage.getItem("bcecli.flash");
+  const flash = sessionStorage.getItem("ragret.flash");
   if (flash) {
-    sessionStorage.removeItem("bcecli.flash");
+    sessionStorage.removeItem("ragret.flash");
     errEl.textContent = flash;
     errEl.hidden = false;
     errEl.classList.add("auth-flash-success");
@@ -1367,8 +1378,8 @@ async function renderLogin(register) {
         body: JSON.stringify({ username, password }),
       });
       setToken(data.token);
-      const returnTo = sessionStorage.getItem("bcecli.returnTo") || "/";
-      sessionStorage.removeItem("bcecli.returnTo");
+      const returnTo = sessionStorage.getItem("ragret.returnTo") || "/";
+      sessionStorage.removeItem("ragret.returnTo");
       history.replaceState({}, "", returnTo);
       render();
     } catch (err) {
@@ -1979,11 +1990,12 @@ async function renderChangePassword(user) {
   appEl.innerHTML = `
     <div class="auth-screen" style="position:relative">
       <a href="#" class="auth-back-top link-button" id="cp-back">${esc(T("backToAccount"))}</a>
-      <div class="auth-title-block">
-        <h1>${esc(T("changePasswordTitle"))}</h1>
-        <p class="muted small">${esc(T("changePasswordSubtitle"))}</p>
-      </div>
-      <main class="auth-card card">
+      <div class="auth-center-stack">
+        <div class="auth-title-block">
+          <h1 class="auth-title-heading">${esc(T("changePasswordTitle"))}</h1>
+          <p class="muted small auth-title-sub">${esc(T("changePasswordSubtitle"))}</p>
+        </div>
+        <main class="auth-card card">
         <p id="cp-error" class="error small auth-error-line" hidden></p>
         <form id="cp-form">
           <label><span>${esc(T("currentPassword"))}</span><input type="password" id="cp-cur" autocomplete="current-password" required /></label>
@@ -1994,7 +2006,8 @@ async function renderChangePassword(user) {
         <div class="auth-card-footer-lang">
           ${renderInterfaceLangSelect("cp-lang-select")}
         </div>
-      </main>
+        </main>
+      </div>
     </div>
   `;
   bindInterfaceLangSelect("cp-lang-select");
@@ -2028,7 +2041,7 @@ async function renderChangePassword(user) {
       }
       setToken("");
       revokeAllAvatarBlobs();
-      sessionStorage.setItem("bcecli.flash", T("passwordChangedRelogin"));
+      sessionStorage.setItem("ragret.flash", T("passwordChangedRelogin"));
       history.replaceState({}, "", "/login");
       render();
     } catch (err) {
@@ -3140,7 +3153,7 @@ async function renderSkillPage(user) {
       const u = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = u;
-      a.download = "bcecli.zip";
+      a.download = "ragret.zip";
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -3170,7 +3183,7 @@ async function render() {
 
   if (!getToken()) {
     setAuthPageLayout(true);
-    sessionStorage.setItem("bcecli.returnTo", location.pathname + location.search);
+    sessionStorage.setItem("ragret.returnTo", location.pathname + location.search);
     history.replaceState({}, "", "/login");
     return render();
   }
@@ -3264,4 +3277,6 @@ try {
 applyTheme();
 if (restored?.stagedUploadId) stagedUploadId = restored.stagedUploadId;
 
-render().catch((e) => setStatus(e.message, true));
+loadUiConfig()
+  .then(() => render())
+  .catch((e) => setStatus(e.message, true));

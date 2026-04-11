@@ -5,9 +5,9 @@ Upstream ``BCEmbedding.tools.langchain.BCERerank`` targets older LangChain; this
 """
 from __future__ import annotations
 
-import bcecli.compat  # noqa: F401 — multiprocess patch before other imports
+import ragret.compat  # noqa: F401 — multiprocess patch before other imports
 
-from bcecli.bce_embedding_rerank_patch import patch_bce_embedding_reranker_tokenize
+from ragret.bce_embedding_rerank_patch import patch_bce_embedding_reranker_tokenize
 
 patch_bce_embedding_reranker_tokenize()
 
@@ -18,7 +18,7 @@ from langchain_core.documents import BaseDocumentCompressor, Document
 from pydantic import ConfigDict, PrivateAttr
 
 
-class BcecliBCERerank(BaseDocumentCompressor):
+class RagretBCERerank(BaseDocumentCompressor):
     """Rerank passages with Netease Youdao BCE RerankerModel (installed via pip)."""
 
     top_n: int = 5

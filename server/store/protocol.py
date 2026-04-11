@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 
@@ -77,6 +78,8 @@ class AppStore(Protocol):
     def get_knowledge_base(self, name: str) -> KBRecord | None: ...
 
     def resolve_kb_db_path(self, name: str) -> str | None: ...
+
+    def all_kb_db_paths(self) -> list[Path]: ...
 
     def delete_knowledge_base(self, name: str) -> bool: ...
 

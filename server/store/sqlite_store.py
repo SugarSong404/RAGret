@@ -623,6 +623,19 @@ class SqliteAppStore:
                 return None
             return str(kb["db_path"])
 
+    def all_kb_db_paths(self) -> list[Path]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT db_path FROM knowledge_bases WHERE TRIM(COALESCE(db_path, '')) != ''",
+            ).fetchall()
+        out: list[Path] = []
+        for (dp,) in rows:
+            try:
+                out.append(Path(str(dp)).expanduser().resolve())
+            except OSError:
+                continue
+        return out
+
     def delete_knowledge_base(self, name: str) -> bool:
         with self._lock:
             kb = self._kb_row_by_name(name)
