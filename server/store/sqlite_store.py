@@ -99,6 +99,8 @@ class SqliteAppStore:
             self._conn.execute("ALTER TABLE users ADD COLUMN avatar_mime TEXT")
         if "gitlab_pat" not in cols:
             self._conn.execute("ALTER TABLE users ADD COLUMN gitlab_pat TEXT NOT NULL DEFAULT ''")
+        if "github_pat" not in cols:
+            self._conn.execute("ALTER TABLE users ADD COLUMN github_pat TEXT NOT NULL DEFAULT ''")
         kb_cols = {str(r[1]) for r in self._conn.execute("PRAGMA table_info(knowledge_bases)").fetchall()}
         if "list_color_idx" not in kb_cols:
             self._conn.execute(
@@ -411,6 +413,25 @@ class SqliteAppStore:
         if row is None:
             return ""
         return str(row["gitlab_pat"] or "").strip()
+
+    def set_user_github_pat(self, user_id: int, pat: str) -> None:
+        token = str(pat or "").strip()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET github_pat = ? WHERE id = ?",
+                (token, int(user_id)),
+            )
+            self._conn.commit()
+
+    def get_user_github_pat(self, user_id: int) -> str:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT github_pat FROM users WHERE id = ?",
+                (int(user_id),),
+            ).fetchone()
+        if row is None:
+            return ""
+        return str(row["github_pat"] or "").strip()
 
     def _kb_row_by_name(self, name: str) -> sqlite3.Row | None:
         return self._conn.execute(

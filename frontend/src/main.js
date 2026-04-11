@@ -149,25 +149,31 @@ const i18n = {
     addKbSubtitle: "Upload a tar archive, then name and describe your index.",
     kbTypeLabel: "Knowledge base type",
     kbTypeTar: "Compressed archive (.tar)",
-    kbTypeWebhook: "Webhook (GitLab)",
+    kbTypeWebhook: "Webhook (GitLab / GitHub)",
     indexName: "Name",
     indexDescription: "Description",
     indexReadme: "README",
     readmePreview: "Preview",
     readmeEdit: "Edit",
     archiveLabel: "Archive (.tar / .tar.gz / .tgz)",
-    webhookAddKbSectionTitle: "Webhook & repository (GitLab HTTP clone, URL, secret)",
+    webhookAddKbSectionTitle: "Webhook & repository (HTTP clone URL, provider, secret)",
+    webhookProviderLabel: "Webhook provider",
+    webhookProviderGitlab: "GitLab",
+    webhookProviderGithub: "GitHub",
     webhookUrlLabel: "Webhook URL",
     webhookSecretLabel: "Secret token",
     webhookRepoUrlLabel: "Repository URL (HTTP/HTTPS)",
-    webhookRepoUrlPlaceholder: "e.g. http://gitlab.local/group/project.git",
-    webhookSecretPlaceholder: "Optional; validate X-Gitlab-Token",
+    webhookBranchLabel: "Branch to build",
+    webhookBranchPlaceholder: "e.g. main or refs/heads/main",
+    webhookRepoUrlPlaceholder: "e.g. https://github.com/org/repo.git or GitLab HTTP URL",
+    webhookSecretPlaceholderGitlab: "Optional; GitLab sends it as X-Gitlab-Token",
+    webhookSecretPlaceholderGithub: "Same secret as in GitHub webhook settings (HMAC SHA-256)",
     webhookSecretRegenerate: "Regenerate secret",
     webhookConfigured: "Webhook configured. Build starts when push events arrive.",
     webhookSaveRepo: "Save repository settings",
     webhookManualPull: "Pull now",
     webhookManualPullHint:
-      "Queues the same build as a GitLab push. Uses the repository URL saved below (updated automatically on each push).",
+      "Queues the same build as a push webhook. Uses the repository URL saved below (updated automatically on each push).",
     chooseFile: "Choose file",
     noFileChosen: "No file chosen",
     uploadProgress: "Upload",
@@ -211,6 +217,7 @@ const i18n = {
     refresh: "Refresh",
     ready: "Ready.",
     requireFields: "Name and description are required.",
+    requireWebhookBranch: "Enter the branch to clone for webhook builds.",
     requireStaged: "Upload a tar archive first.",
     requireStagedManage: "Upload a tar archive first, then rebuild the index.",
     requireDescriptionForRebuild: "Add a non-empty description (above) before rebuilding.",
@@ -254,6 +261,7 @@ const i18n = {
     buildDone: (n) => `Built "${n}".`,
     phase_queued: "Queued",
     phase_extract: "Extract",
+    phase_git_clone: "Git clone",
     phase_load: "Load",
     phase_chunk: "Chunk",
     phase_embed: "Embed",
@@ -272,13 +280,22 @@ const i18n = {
     accountTitle: "Account settings",
     accountSubtitle: "Profile photo",
     apiKeysTitle: "API keys",
-    gitlabPatTitle: "GitLab access token",
+    repoPatSectionTitle: "Repository PATs",
+    repoPatSectionBlurb: "Used to clone private repos when building from GitLab or GitHub webhooks.",
+    gitlabPatSubTitle: "GitLab",
     gitlabPatLabel: "Personal access token (read_repository)",
     gitlabPatPlaceholder: "glpat-...",
     gitlabPatSave: "Save token",
     gitlabPatSaved: "GitLab token saved.",
     gitlabPatConfigured: "GitLab token is configured.",
     gitlabPatNotConfigured: "GitLab token is not configured.",
+    githubPatSubTitle: "GitHub",
+    githubPatLabel: "Fine-grained or classic PAT (repo read / contents)",
+    githubPatPlaceholder: "github_pat_... or ghp_...",
+    githubPatSave: "Save token",
+    githubPatSaved: "GitHub token saved.",
+    githubPatConfigured: "GitHub token is configured.",
+    githubPatNotConfigured: "GitHub token is not configured.",
     apiKeyCreate: "Create API key",
     apiKeyDelete: "Delete",
     apiKeyEyeShow: "Show",
@@ -351,25 +368,31 @@ const i18n = {
     addKbSubtitle: "上传 tar 归档，填写名称与描述后构建索引。",
     kbTypeLabel: "知识库类型",
     kbTypeTar: "压缩文件（.tar）",
-    kbTypeWebhook: "Webhook（GitLab）",
+    kbTypeWebhook: "Webhook（GitLab / GitHub）",
     indexName: "名称",
     indexDescription: "描述",
     indexReadme: "README",
     readmePreview: "预览",
     readmeEdit: "编辑",
     archiveLabel: "归档（.tar / .tar.gz / .tgz）",
-    webhookAddKbSectionTitle: "Webhook 与仓库（GitLab HTTP 克隆、链接、Secret）",
+    webhookAddKbSectionTitle: "Webhook 与仓库（HTTP 克隆地址、平台、Secret）",
+    webhookProviderLabel: "Webhook 平台",
+    webhookProviderGitlab: "GitLab",
+    webhookProviderGithub: "GitHub",
     webhookUrlLabel: "Webhook 链接",
     webhookSecretLabel: "Secret Token",
     webhookRepoUrlLabel: "仓库地址（HTTP/HTTPS）",
-    webhookRepoUrlPlaceholder: "例如：http://gitlab.local/group/project.git",
-    webhookSecretPlaceholder: "可选；用于校验 X-Gitlab-Token",
+    webhookBranchLabel: "构建分支",
+    webhookBranchPlaceholder: "例如 main 或 refs/heads/main",
+    webhookRepoUrlPlaceholder: "例如：https://github.com/org/repo.git 或 GitLab HTTP 地址",
+    webhookSecretPlaceholderGitlab: "可选；GitLab 以 X-Gitlab-Token 请求头发送",
+    webhookSecretPlaceholderGithub: "与 GitHub Webhook 里填写的 Secret 一致（HMAC SHA-256）",
     webhookSecretRegenerate: "重新生成 Secret",
     webhookConfigured: "Webhook 配置完成，后续 push 事件会触发构建。",
     webhookSaveRepo: "保存仓库设置",
     webhookManualPull: "立即拉取",
     webhookManualPullHint:
-      "与 GitLab push webhook 相同的构建任务；使用下方保存的仓库地址（每次 push 会自动更新）。",
+      "与 push webhook 相同的构建任务；使用下方保存的仓库地址（每次 push 会自动更新）。",
     chooseFile: "选择文件",
     noFileChosen: "未选择文件",
     uploadProgress: "上传",
@@ -413,6 +436,7 @@ const i18n = {
     refresh: "刷新",
     ready: "就绪。",
     requireFields: "请填写名称和描述。",
+    requireWebhookBranch: "请填写 Webhook 克隆所用的分支名称。",
     requireStaged: "请先上传 tar 并完成上传。",
     requireStagedManage: "请先上传 tar，再点击重建索引。",
     requireDescriptionForRebuild: "请先填写非空描述（上方描述框）后再重建。",
@@ -456,6 +480,7 @@ const i18n = {
     buildDone: (n) => `已构建「${n}」。`,
     phase_queued: "排队",
     phase_extract: "解压",
+    phase_git_clone: "拉取仓库",
     phase_load: "加载",
     phase_chunk: "分块",
     phase_embed: "向量化",
@@ -474,13 +499,22 @@ const i18n = {
     accountTitle: "账户设置",
     accountSubtitle: "头像",
     apiKeysTitle: "API Key 列表",
-    gitlabPatTitle: "GitLab 访问令牌",
+    repoPatSectionTitle: "代码仓库访问令牌",
+    repoPatSectionBlurb: "Webhook 构建私有仓库时，用于 GitLab / GitHub 的 HTTP 克隆鉴权。",
+    gitlabPatSubTitle: "GitLab",
     gitlabPatLabel: "Personal access token（read_repository）",
     gitlabPatPlaceholder: "glpat-...",
     gitlabPatSave: "保存令牌",
     gitlabPatSaved: "GitLab 令牌已保存。",
     gitlabPatConfigured: "GitLab 令牌已配置。",
     gitlabPatNotConfigured: "GitLab 令牌未配置。",
+    githubPatSubTitle: "GitHub",
+    githubPatLabel: "Fine-grained 或 classic PAT（需能读仓库内容）",
+    githubPatPlaceholder: "github_pat_... 或 ghp_...",
+    githubPatSave: "保存令牌",
+    githubPatSaved: "GitHub 令牌已保存。",
+    githubPatConfigured: "GitHub 令牌已配置。",
+    githubPatNotConfigured: "GitHub 令牌未配置。",
     apiKeyCreate: "创建 API Key",
     apiKeyDelete: "删除",
     apiKeyEyeShow: "显示",
@@ -1128,10 +1162,16 @@ function bindUploadForm() {
   const webhookSecretEyeBtn = document.getElementById("kb-webhook-secret-eye");
   const webhookSecretRegenBtn = document.getElementById("kb-webhook-secret-regen");
   const webhookRepoUrlInput = document.getElementById("kb-webhook-repo-url");
+  const webhookRefInput = document.getElementById("kb-webhook-ref");
+  const webhookProviderEl = document.getElementById("kb-webhook-provider");
   const nameInput = document.getElementById("kb-name");
   const sourceSectionTitleEl = document.getElementById("kb-source-section-title");
   let webhookSecretRaw = "";
   let webhookSecretVisible = false;
+  const webhookBases = {
+    gitlab: `${window.location.origin}/api/webhooks/gitlab/`,
+    github: `${window.location.origin}/api/webhooks/github/`,
+  };
   const refreshWebhookSecretInput = () => {
     if (!webhookSecretInput) return;
     webhookSecretInput.value = webhookSecretVisible ? webhookSecretRaw : "*".repeat(String(webhookSecretRaw || "").length);
@@ -1143,17 +1183,22 @@ function bindUploadForm() {
     webhookSecretVisible = false;
     refreshWebhookSecretInput();
   };
-  let webhookBaseUrl = `${window.location.origin}/api/webhooks/gitlab/`;
+  let webhookBaseUrl = webhookBases.gitlab;
   fetchJSON("/api/webhook-base")
     .then((r) => {
-      const b = String(r?.base_url || "").trim();
-      if (b) {
-        webhookBaseUrl = b;
-        refreshWebhookUrl();
+      const bases = r?.bases;
+      if (bases && typeof bases === "object") {
+        const g = String(bases.gitlab || "").trim();
+        const h = String(bases.github || "").trim();
+        if (g) webhookBases.gitlab = g.endsWith("/") ? g : `${g}/`;
+        if (h) webhookBases.github = h.endsWith("/") ? h : `${h}/`;
       }
+      const b = String(r?.base_url || "").trim();
+      if (b) webhookBases.gitlab = b.endsWith("/") ? b : `${b}/`;
+      applyWebhookProviderUi();
     })
     .catch(() => {
-      /* keep default */
+      /* keep defaults */
     });
   const buildWebhookUrl = () => {
     const kb = (nameInput?.value || "").trim();
@@ -1164,6 +1209,15 @@ function bindUploadForm() {
   const refreshWebhookUrl = () => {
     if (webhookUrlInput) webhookUrlInput.value = buildWebhookUrl();
   };
+  const applyWebhookProviderUi = () => {
+    const prov = webhookProviderEl?.value === "github" ? "github" : "gitlab";
+    webhookBaseUrl = webhookBases[prov] || webhookBases.gitlab;
+    if (webhookSecretInput) {
+      webhookSecretInput.placeholder =
+        prov === "github" ? T("webhookSecretPlaceholderGithub") : T("webhookSecretPlaceholderGitlab");
+    }
+    refreshWebhookUrl();
+  };
   const syncSourceTypeUi = () => {
     const tp = sourceTypeEl?.value === "webhook" ? "webhook" : "tar";
     if (tarBlock) tarBlock.style.display = tp === "tar" ? "" : "none";
@@ -1172,13 +1226,16 @@ function bindUploadForm() {
     if (sourceSectionTitleEl) {
       sourceSectionTitleEl.textContent = tp === "webhook" ? T("webhookAddKbSectionTitle") : T("archiveLabel");
     }
-    refreshWebhookUrl();
+    applyWebhookProviderUi();
     if (tp === "webhook" && !webhookSecretRaw) {
       void generateWebhookSecret();
     }
   };
   syncSourceTypeUi();
   sourceTypeEl?.addEventListener("change", syncSourceTypeUi);
+  webhookProviderEl?.addEventListener("change", () => {
+    applyWebhookProviderUi();
+  });
   nameInput?.addEventListener("input", refreshWebhookUrl);
   webhookSecretEyeBtn?.addEventListener("click", () => {
     webhookSecretVisible = !webhookSecretVisible;
@@ -1218,6 +1275,9 @@ function bindUploadForm() {
     if (sourceType === "webhook" && !String(webhookRepoUrlInput?.value || "").trim()) {
       return setStatus(T("requireFields"), true);
     }
+    if (sourceType === "webhook" && !String(webhookRefInput?.value || "").trim()) {
+      return setStatus(T("requireWebhookBranch"), true);
+    }
     const submitBtn = document.getElementById("submit-btn");
     submitBtn.disabled = true;
     submitBtn.textContent = T("building");
@@ -1232,9 +1292,11 @@ function bindUploadForm() {
           readme_md: readmeMd,
           upload_id: sourceType === "tar" ? stagedUploadId : undefined,
           source_type: sourceType,
-          webhook_provider: sourceType === "webhook" ? "gitlab" : undefined,
+          webhook_provider:
+            sourceType === "webhook" ? (webhookProviderEl?.value === "github" ? "github" : "gitlab") : undefined,
           webhook_secret: sourceType === "webhook" ? webhookSecretRaw : undefined,
           repo_url: sourceType === "webhook" ? String(webhookRepoUrlInput?.value || "").trim() : undefined,
+          ref: sourceType === "webhook" ? String(webhookRefInput?.value || "").trim() : undefined,
           is_public,
         }),
       });
@@ -1542,9 +1604,17 @@ async function renderAddKb(user) {
                     </div>
                   </div>
                   <div id="kb-source-webhook-block" style="display:none">
+                    <label class="lang-select-wrap lang-select-wrap--bare">
+                      <span class="lang-select-label">${esc(T("webhookProviderLabel"))}</span>
+                      <select id="kb-webhook-provider" class="lang-select" aria-label="${esc(T("webhookProviderLabel"))}">
+                        <option value="gitlab">${esc(T("webhookProviderGitlab"))}</option>
+                        <option value="github">${esc(T("webhookProviderGithub"))}</option>
+                      </select>
+                    </label>
                     <label><span>${esc(T("webhookUrlLabel"))}</span><input id="kb-webhook-url" readonly /></label>
                     <label><span>${esc(T("webhookRepoUrlLabel"))}</span><input id="kb-webhook-repo-url" placeholder="${esc(T("webhookRepoUrlPlaceholder"))}" /></label>
-                    <label><span>${esc(T("webhookSecretLabel"))}</span><input id="kb-webhook-secret" readonly placeholder="${esc(T("webhookSecretPlaceholder"))}" /></label>
+                    <label><span>${esc(T("webhookBranchLabel"))}</span><input id="kb-webhook-ref" placeholder="${esc(T("webhookBranchPlaceholder"))}" autocomplete="off" /></label>
+                    <label><span>${esc(T("webhookSecretLabel"))}</span><input id="kb-webhook-secret" readonly placeholder="${esc(T("webhookSecretPlaceholderGitlab"))}" /></label>
                     <p class="form-actions" style="margin-top:0.5rem">
                       <button type="button" class="secondary" id="kb-webhook-secret-eye">${esc(T("apiKeyEyeShow"))}</button>
                       <button type="button" class="secondary" id="kb-webhook-secret-regen">${esc(T("webhookSecretRegenerate"))}</button>
@@ -1685,6 +1755,8 @@ async function renderProfile(user) {
   let apiKeys = [];
   let hasGitlabPat = false;
   let gitlabPatRaw = "";
+  let hasGithubPat = false;
+  let githubPatRaw = "";
   try {
     const data = await fetchJSON("/api/user/api-keys");
     apiKeys = data.keys || [];
@@ -1698,6 +1770,14 @@ async function renderProfile(user) {
   } catch {
     hasGitlabPat = false;
     gitlabPatRaw = "";
+  }
+  try {
+    const data = await fetchJSON("/api/user/github-pat");
+    hasGithubPat = !!data?.has_pat;
+    githubPatRaw = String(data?.pat || "");
+  } catch {
+    hasGithubPat = false;
+    githubPatRaw = "";
   }
   appEl.innerHTML = `
     <div class="app-shell">
@@ -1749,10 +1829,20 @@ async function renderProfile(user) {
                 </div>
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
-                  <h2 class="kb-detail-block-title">${esc(T("gitlabPatTitle"))}</h2>
-                  <p class="muted small">${esc(hasGitlabPat ? T("gitlabPatConfigured") : T("gitlabPatNotConfigured"))}</p>
-                  <label><span>${esc(T("gitlabPatLabel"))}</span><input id="gitlab-pat-input" placeholder="${esc(T("gitlabPatPlaceholder"))}" value="${esc(maskSameLength(gitlabPatRaw))}" /></label>
-                  <p class="form-actions" style="margin-top:0.75rem"><button type="button" id="gitlab-pat-save-btn">${esc(T("gitlabPatSave"))}</button></p>
+                  <h2 class="kb-detail-block-title">${esc(T("repoPatSectionTitle"))}</h2>
+                  <p class="muted small">${esc(T("repoPatSectionBlurb"))}</p>
+                  <div class="repo-pat-subsection">
+                    <h3 class="repo-pat-provider-title">${esc(T("gitlabPatSubTitle"))}</h3>
+                    <p class="muted small">${esc(hasGitlabPat ? T("gitlabPatConfigured") : T("gitlabPatNotConfigured"))}</p>
+                    <label><span>${esc(T("gitlabPatLabel"))}</span><input id="gitlab-pat-input" placeholder="${esc(T("gitlabPatPlaceholder"))}" value="${esc(maskSameLength(gitlabPatRaw))}" /></label>
+                    <p class="form-actions" style="margin-top:0.75rem"><button type="button" id="gitlab-pat-save-btn">${esc(T("gitlabPatSave"))}</button></p>
+                  </div>
+                  <div class="repo-pat-subsection">
+                    <h3 class="repo-pat-provider-title">${esc(T("githubPatSubTitle"))}</h3>
+                    <p class="muted small">${esc(hasGithubPat ? T("githubPatConfigured") : T("githubPatNotConfigured"))}</p>
+                    <label><span>${esc(T("githubPatLabel"))}</span><input id="github-pat-input" placeholder="${esc(T("githubPatPlaceholder"))}" value="${esc(maskSameLength(githubPatRaw))}" /></label>
+                    <p class="form-actions" style="margin-top:0.75rem"><button type="button" id="github-pat-save-btn">${esc(T("githubPatSave"))}</button></p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1861,6 +1951,23 @@ async function renderProfile(user) {
         body: JSON.stringify({ pat }),
       });
       setStatus(T("gitlabPatSaved"));
+      await renderProfile(user);
+    } catch (e) {
+      setStatus(e.message, true);
+    }
+  });
+
+  document.getElementById("github-pat-save-btn")?.addEventListener("click", async () => {
+    const patInputEl = document.getElementById("github-pat-input");
+    const entered = String(patInputEl?.value || "");
+    const pat = entered === maskSameLength(githubPatRaw) ? githubPatRaw : entered.trim();
+    try {
+      await fetchJSON("/api/user/github-pat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pat }),
+      });
+      setStatus(T("githubPatSaved"));
       await renderProfile(user);
     } catch (e) {
       setStatus(e.message, true);
@@ -2319,13 +2426,15 @@ async function renderKbManage(user, name) {
     isOwner && !legacy && isWebhook
       ? `<div class="kb-detail-block">
           <h2 class="kb-detail-block-title">${esc(T("kbUpdateCorpusTitle"))}</h2>
+          <p class="muted small">${esc(T("webhookProviderLabel"))}: ${esc(String(meta?.webhook_provider || "").toLowerCase() === "github" ? T("webhookProviderGithub") : T("webhookProviderGitlab"))}</p>
           <label><span>${esc(T("webhookUrlLabel"))}</span><input id="kb-manage-webhook-url" readonly value="${esc(String(meta?.webhook_url || ""))}" /></label>
-          <label><span>${esc(T("webhookSecretLabel"))}</span><input id="kb-manage-webhook-secret" readonly value="${esc(String(meta?.webhook_secret_masked || ""))}" placeholder="${esc(T("webhookSecretPlaceholder"))}" /></label>
+          <label><span>${esc(T("webhookSecretLabel"))}</span><input id="kb-manage-webhook-secret" readonly value="${esc(String(meta?.webhook_secret_masked || ""))}" placeholder="${esc(String(meta?.webhook_provider || "").toLowerCase() === "github" ? T("webhookSecretPlaceholderGithub") : T("webhookSecretPlaceholderGitlab"))}" /></label>
           <p class="form-actions" style="margin-top:0.75rem">
             <button type="button" class="secondary" id="kb-manage-webhook-eye-btn">${esc(T("apiKeyEyeShow"))}</button>
             <button type="button" id="kb-manage-webhook-regen-btn">${esc(T("webhookSecretRegenerate"))}</button>
           </p>
           <label><span>${esc(T("webhookRepoUrlLabel"))}</span><input id="kb-manage-webhook-repo-url" value="${esc(String(meta?.webhook_repo_url || ""))}" placeholder="${esc(T("webhookRepoUrlPlaceholder"))}" /></label>
+          <label><span>${esc(T("webhookBranchLabel"))}</span><input id="kb-manage-webhook-ref" value="${esc(String(meta?.webhook_ref || ""))}" placeholder="${esc(T("webhookBranchPlaceholder"))}" autocomplete="off" /></label>
           <p class="muted small" style="margin-top:0.5rem">${esc(T("webhookManualPullHint"))}</p>
           <p class="form-actions" style="margin-top:0.75rem">
             <button type="button" class="secondary" id="kb-manage-webhook-save-repo-btn">${esc(T("webhookSaveRepo"))}</button>
@@ -2486,13 +2595,18 @@ async function renderKbManage(user, name) {
     });
     document.getElementById("kb-manage-webhook-save-repo-btn")?.addEventListener("click", async () => {
       const repo_url = String(document.getElementById("kb-manage-webhook-repo-url")?.value || "").trim();
+      const ref = String(document.getElementById("kb-manage-webhook-ref")?.value || "").trim();
       const btn = document.getElementById("kb-manage-webhook-save-repo-btn");
       if (btn) btn.disabled = true;
       try {
+        if (!ref) {
+          setStatus(T("requireWebhookBranch"), true);
+          return;
+        }
         await fetchJSON(`/api/kb/${encodeURIComponent(name)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ repo_url }),
+          body: JSON.stringify({ repo_url, ref }),
         });
         setStatus(T("saveDone"));
         await render();

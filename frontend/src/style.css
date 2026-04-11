@@ -305,6 +305,18 @@ body.auth-page .global-status {
   margin-top: 0;
 }
 
+.repo-pat-provider-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+
+.repo-pat-subsection + .repo-pat-subsection {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--page-section-rule);
+}
+
 .lang-select-wrap--bare .lang-select {
   width: 100%;
   max-width: none;
