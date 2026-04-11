@@ -45,7 +45,12 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at REAL NOT NULL,
     icon TEXT NOT NULL DEFAULT 'book',
-    kb_ready INTEGER NOT NULL DEFAULT 1
+    kb_ready INTEGER NOT NULL DEFAULT 1,
+    source_type TEXT NOT NULL DEFAULT 'tar',
+    webhook_provider TEXT NOT NULL DEFAULT '',
+    webhook_secret TEXT NOT NULL DEFAULT '',
+    webhook_repo_url TEXT NOT NULL DEFAULT '',
+    webhook_ref TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS kb_members (
@@ -92,6 +97,10 @@ class SqliteAppStore:
         cols = {str(r[1]) for r in self._conn.execute("PRAGMA table_info(users)").fetchall()}
         if "avatar_mime" not in cols:
             self._conn.execute("ALTER TABLE users ADD COLUMN avatar_mime TEXT")
+        if "gitlab_pat" not in cols:
+            self._conn.execute("ALTER TABLE users ADD COLUMN gitlab_pat TEXT NOT NULL DEFAULT ''")
+        if "github_pat" not in cols:
+            self._conn.execute("ALTER TABLE users ADD COLUMN github_pat TEXT NOT NULL DEFAULT ''")
         kb_cols = {str(r[1]) for r in self._conn.execute("PRAGMA table_info(knowledge_bases)").fetchall()}
         if "list_color_idx" not in kb_cols:
             self._conn.execute(
@@ -108,6 +117,26 @@ class SqliteAppStore:
         if "icon" not in kb_cols:
             self._conn.execute(
                 "ALTER TABLE knowledge_bases ADD COLUMN icon TEXT NOT NULL DEFAULT 'book'"
+            )
+        if "source_type" not in kb_cols:
+            self._conn.execute(
+                "ALTER TABLE knowledge_bases ADD COLUMN source_type TEXT NOT NULL DEFAULT 'tar'"
+            )
+        if "webhook_provider" not in kb_cols:
+            self._conn.execute(
+                "ALTER TABLE knowledge_bases ADD COLUMN webhook_provider TEXT NOT NULL DEFAULT ''"
+            )
+        if "webhook_secret" not in kb_cols:
+            self._conn.execute(
+                "ALTER TABLE knowledge_bases ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''"
+            )
+        if "webhook_repo_url" not in kb_cols:
+            self._conn.execute(
+                "ALTER TABLE knowledge_bases ADD COLUMN webhook_repo_url TEXT NOT NULL DEFAULT ''"
+            )
+        if "webhook_ref" not in kb_cols:
+            self._conn.execute(
+                "ALTER TABLE knowledge_bases ADD COLUMN webhook_ref TEXT NOT NULL DEFAULT ''"
             )
         self._conn.execute("UPDATE kb_members SET can_read = 1, can_delete = 0")
         subs = self._conn.execute(
@@ -366,6 +395,44 @@ class SqliteAppStore:
         except OSError:
             pass
 
+    def set_user_gitlab_pat(self, user_id: int, pat: str) -> None:
+        token = str(pat or "").strip()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET gitlab_pat = ? WHERE id = ?",
+                (token, int(user_id)),
+            )
+            self._conn.commit()
+
+    def get_user_gitlab_pat(self, user_id: int) -> str:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT gitlab_pat FROM users WHERE id = ?",
+                (int(user_id),),
+            ).fetchone()
+        if row is None:
+            return ""
+        return str(row["gitlab_pat"] or "").strip()
+
+    def set_user_github_pat(self, user_id: int, pat: str) -> None:
+        token = str(pat or "").strip()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE users SET github_pat = ? WHERE id = ?",
+                (token, int(user_id)),
+            )
+            self._conn.commit()
+
+    def get_user_github_pat(self, user_id: int) -> str:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT github_pat FROM users WHERE id = ?",
+                (int(user_id),),
+            ).fetchone()
+        if row is None:
+            return ""
+        return str(row["github_pat"] or "").strip()
+
     def _kb_row_by_name(self, name: str) -> sqlite3.Row | None:
         return self._conn.execute(
             """
@@ -437,6 +504,14 @@ class SqliteAppStore:
             ou = ""
         o_has = self._user_has_avatar_unlocked(oid)
         pub = self._kb_is_public_unlocked(kb)
+        try:
+            wru = str(kb["webhook_repo_url"] or "")
+        except (KeyError, TypeError, ValueError):
+            wru = ""
+        try:
+            wrf = str(kb["webhook_ref"] or "")
+        except (KeyError, TypeError, ValueError):
+            wrf = ""
         return KBRecord(
             id=int(kb["id"]),
             name=str(kb["name"]),
@@ -447,6 +522,11 @@ class SqliteAppStore:
             is_public=pub,
             list_color_idx=lc,
             icon=str(kb["icon"] or "book"),
+            source_type=str(kb["source_type"] or "tar"),
+            webhook_provider=str(kb["webhook_provider"] or ""),
+            webhook_secret=str(kb["webhook_secret"] or ""),
+            webhook_repo_url=wru,
+            webhook_ref=wrf,
             owner_username=ou,
             owner_has_avatar=o_has,
             permission=perm,
@@ -462,23 +542,49 @@ class SqliteAppStore:
         owner_id: int,
         is_public: bool = False,
         icon: str = "book",
+        source_type: str = "tar",
+        webhook_provider: str = "",
+        webhook_secret: str = "",
+        webhook_repo_url: str = "",
+        webhook_ref: str = "",
     ) -> KBRecord:
         t = self._now()
         desc = str(description).strip()
         readme = str(readme_md or "").strip()
         pub_i = 1 if is_public else 0
         icon_key = str(icon or "book").strip() or "book"
+        src = str(source_type or "tar").strip().lower() or "tar"
+        provider = str(webhook_provider or "").strip().lower()
+        secret = str(webhook_secret or "").strip()
+        wru = str(webhook_repo_url or "").strip()
+        wrf = str(webhook_ref or "").strip()
         with self._lock:
             try:
                 color = self._pick_least_used_list_color_unlocked()
                 cur = self._conn.execute(
                     """
                     INSERT INTO knowledge_bases(
-                        name, description, readme_md, db_path, owner_id, created_at, list_color_idx, is_public, icon
+                        name, description, readme_md, db_path, owner_id, created_at, list_color_idx, is_public, icon,
+                        source_type, webhook_provider, webhook_secret, webhook_repo_url, webhook_ref
                     )
-                    VALUES(?,?,?,?,?,?,?,?,?)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
-                    (name, desc, readme, str(db_path), int(owner_id), t, color, pub_i, icon_key),
+                    (
+                        name,
+                        desc,
+                        readme,
+                        str(db_path),
+                        int(owner_id),
+                        t,
+                        color,
+                        pub_i,
+                        icon_key,
+                        src,
+                        provider,
+                        secret,
+                        wru,
+                        wrf,
+                    ),
                 )
                 self._conn.commit()
                 kb_id = int(cur.lastrowid)
@@ -582,6 +688,45 @@ class SqliteAppStore:
             self._conn.execute(
                 "UPDATE knowledge_bases SET icon = ? WHERE id = ?",
                 (icon_key, int(kb["id"])),
+            )
+            self._conn.commit()
+        return True
+
+    def update_knowledge_base_webhook_secret(self, name: str, secret: str) -> bool:
+        tok = str(secret or "").strip()
+        with self._lock:
+            kb = self._kb_row_by_name(name)
+            if kb is None:
+                return False
+            if not self._kb_ready_from_row(kb):
+                return False
+            self._conn.execute(
+                "UPDATE knowledge_bases SET webhook_secret = ? WHERE id = ?",
+                (tok, int(kb["id"])),
+            )
+            self._conn.commit()
+        return True
+
+    def update_knowledge_base_webhook_source(
+        self, name: str, *, repo_url: str | None = None, ref: str | None = None
+    ) -> bool:
+        with self._lock:
+            kb = self._kb_row_by_name(name)
+            if kb is None:
+                return False
+            try:
+                cur_ru = str(kb["webhook_repo_url"] or "")
+            except (KeyError, TypeError, ValueError):
+                cur_ru = ""
+            try:
+                cur_rf = str(kb["webhook_ref"] or "")
+            except (KeyError, TypeError, ValueError):
+                cur_rf = ""
+            new_ru = str(repo_url).strip() if repo_url is not None else cur_ru
+            new_rf = str(ref).strip() if ref is not None else cur_rf
+            self._conn.execute(
+                "UPDATE knowledge_bases SET webhook_repo_url = ?, webhook_ref = ? WHERE id = ?",
+                (new_ru, new_rf, int(kb["id"])),
             )
             self._conn.commit()
         return True
@@ -873,8 +1018,25 @@ class SqliteAppStore:
                 "SELECT COUNT(*) AS c FROM api_keys WHERE user_id = ?",
                 (int(user_id),),
             ).fetchone()
-            if int(cnt["c"] or 0) >= 5:
+            c = int(cnt["c"] or 0)
+            if c >= 3:
                 return None
+            if not nm:
+                rows = self._conn.execute(
+                    "SELECT name FROM api_keys WHERE user_id = ?",
+                    (int(user_id),),
+                ).fetchall()
+                mx = 0
+                for r in rows:
+                    s = str(r["name"] or "").strip().lower()
+                    if not s.startswith("apikey-"):
+                        continue
+                    try:
+                        n = int(s.split("-", 1)[1])
+                    except (ValueError, IndexError):
+                        continue
+                    mx = max(mx, n)
+                nm = f"apikey-{mx + 1}"
             cur = self._conn.execute(
                 "INSERT INTO api_keys(user_id, name, key_value, created_at) VALUES(?,?,?,?)",
                 (int(user_id), nm, kv, self._now()),
@@ -999,25 +1161,59 @@ class SqliteAppStore:
         owner_id: int,
         is_public: bool = False,
         icon: str = "book",
+        source_type: str = "tar",
+        webhook_provider: str = "",
+        webhook_secret: str = "",
+        webhook_repo_url: str = "",
+        webhook_ref: str = "",
     ) -> None:
         t = self._now()
         desc = str(description).strip()
         readme = str(readme_md or "").strip()
         pub_i = 1 if is_public else 0
         icon_key = str(icon or "book").strip() or "book"
+        src = str(source_type or "tar").strip().lower() or "tar"
+        provider = str(webhook_provider or "").strip().lower()
+        secret = str(webhook_secret or "").strip()
+        wru = str(webhook_repo_url or "").strip()
+        wrf = str(webhook_ref or "").strip()
         with self._lock:
             color = self._pick_least_used_list_color_unlocked()
             self._conn.execute(
                 """
                 INSERT INTO knowledge_bases(
                     name, description, readme_md, db_path, owner_id, created_at,
-                    list_color_idx, is_public, icon, kb_ready
+                    list_color_idx, is_public, icon, kb_ready, source_type, webhook_provider, webhook_secret,
+                    webhook_repo_url, webhook_ref
                 )
-                VALUES(?,?,?,?,?,?,?,?,?,0)
+                VALUES(?,?,?,?,?,?,?,?,?,0,?,?,?,?,?)
                 """,
-                (name, desc, readme, str(db_path), int(owner_id), t, color, pub_i, icon_key),
+                (
+                    name,
+                    desc,
+                    readme,
+                    str(db_path),
+                    int(owner_id),
+                    t,
+                    color,
+                    pub_i,
+                    icon_key,
+                    src,
+                    provider,
+                    secret,
+                    wru,
+                    wrf,
+                ),
             )
             self._conn.commit()
+
+    def get_kb_record_any_state(self, name: str) -> KBRecord | None:
+        with self._lock:
+            kb = self._kb_row_by_name(name)
+            if kb is None:
+                return None
+            perm = KBPermission(can_read=True, can_write=True, can_delete=True, is_owner=True)
+            return self._row_to_record(kb, perm)
 
     def finalize_knowledge_base_ready(self, name: str) -> bool:
         with self._lock:

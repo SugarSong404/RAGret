@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import cgi
+import hashlib
+import hmac
+import io
 import json
 import mimetypes
 import os
 import re
 import secrets
 import shutil
+import socket
 import sys
 import tarfile
 import threading
 import time
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -20,7 +25,12 @@ from urllib.parse import parse_qs, unquote, urlparse
 from bcecli.registry import IndexRegistry, safe_index_name, safe_sqlite_basename
 
 from server.archive_util import is_tar_archive_filename, safe_extract_tar_archive
-from server.build_queue import cleanup_upload_staging, start_global_build_worker, wake_build_worker
+from server.build_queue import (
+    cleanup_upload_staging,
+    is_http_git_clone_url,
+    start_global_build_worker,
+    wake_build_worker,
+)
 from server.passwords import hash_password
 from server.store import create_app_store
 from server.store.protocol import AppStore, KBRecord
@@ -32,8 +42,63 @@ _USERNAME_RE = re.compile(r"^[a-zA-Z0-9._-]{3,64}$")
 
 _UPLOAD_ID_RE = re.compile(r"^[a-f0-9]{24}$")
 _MAX_USER_UPLOAD_JOBS = 3
+
+
+def _provider_webhook_kb_from_path(path: str) -> tuple[str, str] | None:
+    """Match /(api/)?webhooks?/(gitlab|github)/<kb> (optional /api prefix). Returns (provider, kb_name)."""
+    m = re.search(
+        r"(?i)/(?:api/)?(?:webhooks?)/(?P<prov>gitlab|github)/(?P<kb>[^/?#]+)", path or ""
+    )
+    if not m:
+        return None
+    return (m.group("prov").lower(), unquote(m.group("kb")))
+
+
+def _github_signature256_valid(secret: str, payload: bytes, sig_header: str) -> bool:
+    if not secret or not sig_header:
+        return False
+    sh = sig_header.strip()
+    if not sh.startswith("sha256="):
+        return False
+    want = sh[7:].strip().lower()
+    mac = hmac.new(secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(mac, want)
+
+
+def _unwrap_github_logged_payload(data: dict[str, Any]) -> dict[str, Any]:
+    """Support delivery logs that wrap the JSON body in summary=payload%3D... (URL-encoded)."""
+    summ = str(data.get("summary") or "")
+    if not summ.startswith("payload="):
+        return data
+    try:
+        inner = json.loads(unquote(summ[len("payload=") :]))
+    except (json.JSONDecodeError, ValueError):
+        return data
+    return inner if isinstance(inner, dict) else data
 _AVATAR_MAX_BYTES = int(os.environ.get("BCECLI_AVATAR_MAX_BYTES", str(2 * 1024 * 1024)))
 _ALLOWED_AVATAR_TYPES = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp"})
+def _best_public_host() -> str:
+    env = str(os.environ.get("BCECLI_PUBLIC_HOST") or "").strip()
+    if env:
+        return env
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            ip = str(s.getsockname()[0] or "").strip()
+            if ip:
+                return ip
+    except OSError:
+        pass
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, family=socket.AF_INET)
+        for it in infos:
+            ip = str(it[4][0] or "").strip()
+            if ip and ip != "127.0.0.1":
+                return ip
+    except OSError:
+        pass
+    return "127.0.0.1"
+
 
 
 def _sniff_image_mime(data: bytes) -> str | None:
@@ -171,6 +236,11 @@ def _serialize_kb(rec: KBRecord) -> dict[str, Any]:
         "is_public": bool(rec.is_public),
         "list_color_idx": lc,
         "icon": str(rec.icon or "book"),
+        "source_type": str(rec.source_type or "tar"),
+        "webhook_provider": str(rec.webhook_provider or ""),
+        "webhook_secret_len": len(str(rec.webhook_secret or "")),
+        "webhook_repo_url": str(rec.webhook_repo_url or ""),
+        "webhook_ref": str(rec.webhook_ref or ""),
         "owner": {
             "id": rec.owner_id,
             "username": rec.owner_username,
@@ -252,6 +322,259 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 return None
             return data
 
+        def _webhook_proto_host(self) -> tuple[str, str]:
+            host = _best_public_host()
+            port = self.server.server_port
+            if port not in (80, 443):
+                host = f"{host}:{int(port)}"
+            proto = "http"
+            xf = (self.headers.get("X-Forwarded-Proto") or "").strip().lower()
+            if xf in ("http", "https"):
+                proto = xf
+            return proto, host
+
+        def _webhook_url_for_kb(self, kb_name: str) -> str:
+            proto, host = self._webhook_proto_host()
+            prov = "gitlab"
+            if kb_name:
+                rec = app_store.get_kb_record_any_state(kb_name)
+                if rec is not None:
+                    p = str(rec.webhook_provider or "").strip().lower()
+                    if p in ("gitlab", "github"):
+                        prov = p
+            return f"{proto}://{host}/api/webhooks/{prov}/{kb_name}"
+
+        def _webhook_base_urls(self) -> dict[str, str]:
+            proto, host = self._webhook_proto_host()
+            base = f"{proto}://{host}/api/webhooks"
+            return {"gitlab": f"{base}/gitlab/", "github": f"{base}/github/"}
+
+        def _complete_webhook_push(
+            self, safe_name: str, rec: KBRecord, repo_url: str, checkout_sha: str
+        ) -> None:
+            app_store.update_knowledge_base_webhook_source(safe_name, repo_url=repo_url, ref=None)
+            build_ref = str(rec.webhook_ref or "").strip()
+            if not build_ref:
+                _send_json(
+                    self,
+                    400,
+                    {
+                        "ok": False,
+                        "error": "Branch not configured: set ref (branch) on the knowledge base in the console, then retry.",
+                    },
+                )
+                return
+            op = "update" if Path(str(rec.db_path or "")).is_file() else "create"
+            job_id = secrets.token_hex(12)
+            payload = {
+                "description": str(rec.description or ""),
+                "readme_md": str(rec.readme_md or ""),
+                "is_public": bool(rec.is_public),
+                "icon": str(rec.icon or "book"),
+                "repo_url": repo_url,
+                "ref": build_ref,
+                "checkout_sha": str(checkout_sha or ""),
+            }
+            app_store.enqueue_build_job(
+                job_id=job_id,
+                user_id=int(rec.owner_id),
+                task_kind="webhook",
+                op=op,
+                kb_name=safe_name,
+                upload_id=secrets.token_hex(12),
+                payload=payload,
+            )
+            wake_build_worker()
+            _send_json(self, 202, {"ok": True, "job_id": job_id, "op": op})
+
+        def _handle_gitlab_webhook(self, kb_name: str) -> None:
+            data = self._read_json_body()
+            if data is None:
+                return
+            if str(data.get("event_name") or data.get("object_kind") or "").lower() != "push":
+                _send_json(self, 202, {"ok": True, "ignored": True, "reason": "not_push_event"})
+                return
+            try:
+                safe_name = safe_index_name(kb_name)
+            except ValueError as e:
+                _send_json(self, 400, {"ok": False, "error": str(e)})
+                return
+            rec = app_store.get_kb_record_any_state(safe_name)
+            if rec is None:
+                _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
+                return
+            if str(rec.source_type or "tar") != "webhook" or str(rec.webhook_provider or "") != "gitlab":
+                _send_json(self, 400, {"ok": False, "error": "Knowledge base is not configured for GitLab webhook"})
+                return
+            expected = str(rec.webhook_secret or "").strip()
+            got = str(self.headers.get("X-Gitlab-Token") or "").strip()
+            if expected and not secrets.compare_digest(expected, got):
+                _send_json(self, 403, {"ok": False, "error": "Invalid webhook secret"})
+                return
+            project = data.get("project") if isinstance(data.get("project"), dict) else {}
+            repository = data.get("repository") if isinstance(data.get("repository"), dict) else {}
+            repo_url = (
+                str(project.get("git_http_url") or "").strip()
+                or str(repository.get("git_http_url") or "").strip()
+                or str(project.get("http_url") or "").strip()
+                or str(repository.get("url") or "").strip()
+            )
+            if not repo_url:
+                _send_json(self, 400, {"ok": False, "error": "Missing repository URL in webhook payload"})
+                return
+            if not is_http_git_clone_url(repo_url):
+                _send_json(
+                    self,
+                    400,
+                    {
+                        "ok": False,
+                        "error": "Webhook payload repository URL must be http(s)://… (got a non-URL value; check GitLab project fields).",
+                    },
+                )
+                return
+            self._complete_webhook_push(safe_name, rec, repo_url, str(data.get("checkout_sha") or ""))
+
+        def _handle_github_webhook(self, kb_name: str) -> None:
+            ctype = self.headers.get("Content-Type", "")
+            if "application/json" not in ctype:
+                _send_json(self, 415, {"ok": False, "error": "Content-Type must be application/json"})
+                return
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(n) if n > 0 else b"{}"
+            except ValueError:
+                _send_json(self, 400, {"ok": False, "error": "Invalid Content-Length"})
+                return
+            try:
+                data = json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                _send_json(self, 400, {"ok": False, "error": "Invalid JSON body"})
+                return
+            if not isinstance(data, dict):
+                _send_json(self, 400, {"ok": False, "error": "JSON body must be an object"})
+                return
+            try:
+                safe_name = safe_index_name(kb_name)
+            except ValueError as e:
+                _send_json(self, 400, {"ok": False, "error": str(e)})
+                return
+            rec = app_store.get_kb_record_any_state(safe_name)
+            if rec is None:
+                _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
+                return
+            if str(rec.source_type or "tar") != "webhook" or str(rec.webhook_provider or "") != "github":
+                _send_json(self, 400, {"ok": False, "error": "Knowledge base is not configured for GitHub webhook"})
+                return
+            expected = str(rec.webhook_secret or "").strip()
+            if expected:
+                sig = self.headers.get("X-Hub-Signature-256") or ""
+                if not _github_signature256_valid(expected, raw, sig):
+                    _send_json(self, 403, {"ok": False, "error": "Invalid webhook signature"})
+                    return
+            data = _unwrap_github_logged_payload(data)
+            event = (self.headers.get("X-GitHub-Event") or "").strip().lower() or str(
+                data.get("event") or ""
+            ).strip().lower()
+            repo = data.get("repository") if isinstance(data.get("repository"), dict) else {}
+            clone_url = str(repo.get("clone_url") or "").strip()
+            if not clone_url:
+                _send_json(
+                    self,
+                    400,
+                    {"ok": False, "error": "Missing repository clone_url in webhook payload"},
+                )
+                return
+            if not is_http_git_clone_url(clone_url):
+                _send_json(
+                    self,
+                    400,
+                    {
+                        "ok": False,
+                        "error": "repository.clone_url must be an https://… URL",
+                    },
+                )
+                return
+            if event and event != "push":
+                _send_json(self, 202, {"ok": True, "ignored": True, "reason": "not_push_event"})
+                return
+            self._complete_webhook_push(safe_name, rec, clone_url, str(data.get("after") or ""))
+
+        def _handle_kb_webhook_pull(self, name_raw: str) -> None:
+            owner = self._require_user_id()
+            if owner is None:
+                return
+            try:
+                key = safe_index_name(name_raw)
+            except ValueError as e:
+                _send_json(self, 400, {"ok": False, "error": str(e)})
+                return
+            perm = app_store.permission_for(int(owner), key)
+            if perm is None or not perm.is_owner:
+                _send_json(self, 403, {"ok": False, "error": "Only the owner can trigger a manual pull"})
+                return
+            rec = app_store.get_kb_record_any_state(key)
+            if rec is None:
+                _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
+                return
+            prov = str(rec.webhook_provider or "").strip().lower()
+            if str(rec.source_type or "tar") != "webhook" or prov not in ("gitlab", "github"):
+                _send_json(self, 400, {"ok": False, "error": "Not a GitLab/GitHub webhook knowledge base"})
+                return
+            repo_url = str(rec.webhook_repo_url or "").strip()
+            ref = str(rec.webhook_ref or "").strip()
+            if not repo_url:
+                _send_json(
+                    self,
+                    400,
+                    {
+                        "ok": False,
+                        "error": "No repository URL stored yet; wait for a push webhook or set repo_url via PATCH",
+                    },
+                )
+                return
+            if not is_http_git_clone_url(repo_url):
+                _send_json(
+                    self,
+                    400,
+                    {
+                        "ok": False,
+                        "error": "Stored repo_url is not a valid http(s) address. Open manage and set repository URL to https://… (not the webhook secret).",
+                    },
+                )
+                return
+            if not ref:
+                _send_json(
+                    self,
+                    400,
+                    {
+                        "ok": False,
+                        "error": "Branch (ref) is not set; configure it in knowledge base settings before pulling.",
+                    },
+                )
+                return
+            op = "update" if Path(str(rec.db_path or "")).is_file() else "create"
+            job_id = secrets.token_hex(12)
+            payload = {
+                "description": str(rec.description or ""),
+                "readme_md": str(rec.readme_md or ""),
+                "is_public": bool(rec.is_public),
+                "icon": str(rec.icon or "book"),
+                "repo_url": repo_url,
+                "ref": ref,
+                "checkout_sha": "",
+            }
+            app_store.enqueue_build_job(
+                job_id=job_id,
+                user_id=int(rec.owner_id),
+                task_kind="webhook",
+                op=op,
+                kb_name=key,
+                upload_id=secrets.token_hex(12),
+                payload=payload,
+            )
+            wake_build_worker()
+            _send_json(self, 202, {"ok": True, "job_id": job_id, "op": op})
+
         def _db_for_search(self, index_name: str, k: str, uid: int | None) -> Path | None:
             store_path = app_store.resolve_kb_db_path(index_name)
             if k == "superuser":
@@ -288,6 +611,10 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
 
             if parts[0].lower() == "health" and len(parts) == 1:
                 _send_json(self, 200, {"ok": True})
+                return
+
+            if _provider_webhook_kb_from_path(parsed.path) is not None:
+                _send_json(self, 200, {"ok": True, "accept": "POST"})
                 return
 
             if parts[0].lower() == "api":
@@ -345,6 +672,54 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 )
                 return
 
+            if len(parts) == 1 and parts[0].lower() == "webhook-base":
+                bases = self._webhook_base_urls()
+                _send_json(
+                    self,
+                    200,
+                    {
+                        "ok": True,
+                        "base_url": bases["gitlab"],
+                        "bases": bases,
+                    },
+                )
+                return
+
+            if len(parts) == 1 and parts[0].lower() == "skill-md":
+                p = (root / "SKILL.md").resolve()
+                if not p.is_file():
+                    _send_json(self, 404, {"ok": False, "error": "SKILL.md not found"})
+                    return
+                try:
+                    text = p.read_text(encoding="utf-8")
+                except OSError as e:
+                    _send_json(self, 500, {"ok": False, "error": str(e)})
+                    return
+                _send_json(self, 200, {"ok": True, "content": text, "filename": "SKILL.md"})
+                return
+
+            if len(parts) == 2 and parts[0].lower() == "skill-md" and parts[1].lower() == "download":
+                p = (root / "SKILL.md").resolve()
+                if not p.is_file():
+                    _send_json(self, 404, {"ok": False, "error": "SKILL.md not found"})
+                    return
+                try:
+                    raw = p.read_bytes()
+                    buf = io.BytesIO()
+                    with zipfile.ZipFile(buf, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                        zf.writestr("bcecli/SKILL.md", raw)
+                    body = buf.getvalue()
+                except OSError as e:
+                    _send_json(self, 500, {"ok": False, "error": str(e)})
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", 'attachment; filename="bcecli.zip"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             if not parts:
                 _send_json(
                     self,
@@ -355,12 +730,15 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                         "endpoints": {
                             "auth": "POST /api/auth/register | /api/auth/login | /api/auth/logout",
                             "list": "GET /api/indexes",
-                            "kb": "GET /api/kb/{name}",
+                            "kb": "GET /api/kb/{name} | PATCH (repo_url, ref for webhook)",
+                            "webhook_pull": "POST /api/kb/{name}/webhook-pull (owner, GitLab/GitHub webhook KB)",
                             "members": "GET/POST/DELETE /api/kb/{name}/members",
                             "subscribe": "POST|DELETE /api/kb/{name}/subscribe",
                             "subscriptions": "GET /api/user/subscriptions",
                             "subscribe_indexes": "GET /api/subscribe-indexes (API key only)",
                             "api_keys": "GET/POST/DELETE /api/user/api-keys",
+                            "gitlab_pat": "GET/POST /api/user/gitlab-pat",
+                            "github_pat": "GET/POST /api/user/github-pat",
                             "search": "GET /api/search/{index}?query=...",
                             "upload": "POST /api/upload",
                             "build": "POST /api/indexes/build",
@@ -404,6 +782,28 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     return
                 rows = app_store.list_api_keys_for_user(int(uid))
                 _send_json(self, 200, {"ok": True, "keys": rows})
+                return
+            if parts[0].lower() == "user" and len(parts) == 2 and parts[1].lower() == "gitlab-pat":
+                if k != "user" or uid is None:
+                    _send_json(self, 403, {"ok": False, "error": "Login required"})
+                    return
+                has_pat = bool(app_store.get_user_gitlab_pat(int(uid)))
+                pat = app_store.get_user_gitlab_pat(int(uid))
+                _send_json(self, 200, {"ok": True, "has_pat": has_pat, "pat": pat})
+                return
+            if parts[0].lower() == "user" and len(parts) == 2 and parts[1].lower() == "github-pat":
+                if k != "user" or uid is None:
+                    _send_json(self, 403, {"ok": False, "error": "Login required"})
+                    return
+                has_pat = bool(app_store.get_user_github_pat(int(uid)))
+                pat = app_store.get_user_github_pat(int(uid))
+                _send_json(self, 200, {"ok": True, "has_pat": has_pat, "pat": pat})
+                return
+            if parts[0].lower() == "user" and len(parts) == 3 and parts[1].lower() == "webhook-secret" and parts[2].lower() == "generate":
+                if k != "user" or uid is None:
+                    _send_json(self, 403, {"ok": False, "error": "Login required"})
+                    return
+                _send_json(self, 200, {"ok": True, "secret": secrets.token_urlsafe(24)})
                 return
 
             if parts[0].lower() == "search" and len(parts) == 2:
@@ -477,6 +877,8 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 body = _serialize_kb(rec)
                 body["readme_md"] = str(rec.readme_md or "")
                 body["legacy_registry_only"] = False
+                body["webhook_url"] = self._webhook_url_for_kb(name)
+                body["webhook_secret_masked"] = "*" * int(body.get("webhook_secret_len") or 0)
                 if k != "superuser":
                     body["permission"] = {
                         "can_read": perm.can_read,
@@ -510,6 +912,21 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     return
                 mime, raw = icon
                 _send_bytes(self, 200, raw, mime)
+                return
+            if parts[0].lower() == "kb" and len(parts) == 3 and parts[2].lower() == "webhook-secret":
+                name = parts[1]
+                if k != "user" or uid is None:
+                    _send_json(self, 403, {"ok": False, "error": "Login required"})
+                    return
+                perm = app_store.permission_for(int(uid), name)
+                if perm is None or not perm.is_owner:
+                    _send_json(self, 403, {"ok": False, "error": "Only owner can read webhook secret"})
+                    return
+                rec = app_store.get_kb_record_any_state(name)
+                if rec is None:
+                    _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
+                    return
+                _send_json(self, 200, {"ok": True, "secret": str(rec.webhook_secret or "")})
                 return
 
             if parts[0].lower() == "kb" and len(parts) == 3 and parts[2].lower() == "members":
@@ -654,6 +1071,15 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     self._handle_auth_logout()
                     return
 
+            wh = _provider_webhook_kb_from_path(parsed.path)
+            if wh is not None:
+                prov, wk_kb = wh
+                if prov == "gitlab":
+                    self._handle_gitlab_webhook(wk_kb)
+                else:
+                    self._handle_github_webhook(wk_kb)
+                return
+
             if not self._require_actor():
                 return
 
@@ -713,6 +1139,14 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 len(parts) == 4
                 and parts[0].lower() == "api"
                 and parts[1].lower() == "kb"
+                and parts[3].lower() == "webhook-pull"
+            ):
+                self._handle_kb_webhook_pull(parts[2])
+                return
+            if (
+                len(parts) == 4
+                and parts[0].lower() == "api"
+                and parts[1].lower() == "kb"
                 and parts[3].lower() == "members"
             ):
                 self._handle_kb_members_post(parts[2])
@@ -756,6 +1190,36 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 and parts[2].lower() == "api-keys"
             ):
                 self._handle_api_key_create()
+                return
+            if (
+                len(parts) == 3
+                and parts[0].lower() == "api"
+                and parts[1].lower() == "user"
+                and parts[2].lower() == "gitlab-pat"
+            ):
+                uid = self._require_user_id()
+                if uid is None:
+                    return
+                data = self._read_json_body()
+                if data is None:
+                    return
+                app_store.set_user_gitlab_pat(int(uid), str(data.get("pat") or ""))
+                _send_json(self, 200, {"ok": True})
+                return
+            if (
+                len(parts) == 3
+                and parts[0].lower() == "api"
+                and parts[1].lower() == "user"
+                and parts[2].lower() == "github-pat"
+            ):
+                uid = self._require_user_id()
+                if uid is None:
+                    return
+                data = self._read_json_body()
+                if data is None:
+                    return
+                app_store.set_user_github_pat(int(uid), str(data.get("pat") or ""))
+                _send_json(self, 200, {"ok": True})
                 return
 
             _send_json(self, 404, {"ok": False, "error": "Not found"})
@@ -984,7 +1448,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
             key_value = "sk-" + secrets.token_urlsafe(24).replace("-", "").replace("_", "")[:36]
             rec = app_store.create_api_key_for_user(int(uid), name=name, key_value=key_value)
             if rec is None:
-                _send_json(self, 400, {"ok": False, "error": "You can create at most 5 API keys"})
+                _send_json(self, 400, {"ok": False, "error": "You can create at most 3 API keys"})
                 return
             _send_json(self, 200, {"ok": True, "key": rec})
 
@@ -1138,7 +1602,34 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     txt = str(data.get("readme_md") or "").strip()
                     if app_store.update_knowledge_base_readme(active_key, txt):
                         did = True
-                if not did and "description" not in data and "is_public" not in data and "name" not in data and "readme_md" not in data:
+                if "webhook_secret" in data:
+                    if app_store.update_knowledge_base_webhook_secret(
+                        active_key, str(data.get("webhook_secret") or "")
+                    ):
+                        did = True
+                if bool(data.get("regenerate_webhook_secret")):
+                    if app_store.update_knowledge_base_webhook_secret(active_key, secrets.token_urlsafe(24)):
+                        did = True
+                if "repo_url" in data or "ref" in data:
+                    if "repo_url" in data:
+                        ru = str(data.get("repo_url") or "").strip()
+                        if ru and not is_http_git_clone_url(ru):
+                            _send_json(
+                                self,
+                                400,
+                                {
+                                    "ok": False,
+                                    "error": "repo_url must start with http:// or https:// and include a path (clone URL, not a secret token).",
+                                },
+                            )
+                            return
+                    if app_store.update_knowledge_base_webhook_source(
+                        active_key,
+                        repo_url=str(data.get("repo_url") or "").strip() if "repo_url" in data else None,
+                        ref=str(data.get("ref") or "").strip() if "ref" in data else None,
+                    ):
+                        did = True
+                if not did and "description" not in data and "is_public" not in data and "name" not in data and "readme_md" not in data and "webhook_secret" not in data and "regenerate_webhook_secret" not in data and "repo_url" not in data and "ref" not in data:
                     _send_json(self, 400, {"ok": False, "error": "No updates provided"})
                     return
                 if not did:
@@ -1156,11 +1647,20 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
             data = self._read_json_body()
             if data is None:
                 return
-            if "description" not in data and "is_public" not in data and "name" not in data and "readme_md" not in data:
+            if "description" not in data and "is_public" not in data and "name" not in data and "readme_md" not in data and "webhook_secret" not in data and "regenerate_webhook_secret" not in data and "repo_url" not in data and "ref" not in data:
                 _send_json(self, 400, {"ok": False, "error": "No updates provided"})
                 return
             if "is_public" in data and not perm.is_owner:
                 _send_json(self, 403, {"ok": False, "error": "Only the owner can change visibility"})
+                return
+            if "webhook_secret" in data and not perm.is_owner:
+                _send_json(self, 403, {"ok": False, "error": "Only the owner can update webhook secret"})
+                return
+            if bool(data.get("regenerate_webhook_secret")) and not perm.is_owner:
+                _send_json(self, 403, {"ok": False, "error": "Only the owner can update webhook secret"})
+                return
+            if ("repo_url" in data or "ref" in data) and not perm.is_owner:
+                _send_json(self, 403, {"ok": False, "error": "Only the owner can update webhook repository settings"})
                 return
             if "description" in data and not perm.can_write:
                 _send_json(self, 403, {"ok": False, "error": "Forbidden"})
@@ -1204,6 +1704,36 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
             if "readme_md" in data:
                 txt = str(data.get("readme_md") or "").strip()
                 if not app_store.update_knowledge_base_readme(active_key, txt):
+                    _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
+                    return
+            if "webhook_secret" in data:
+                if not app_store.update_knowledge_base_webhook_secret(
+                    active_key, str(data.get("webhook_secret") or "")
+                ):
+                    _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
+                    return
+            if bool(data.get("regenerate_webhook_secret")):
+                if not app_store.update_knowledge_base_webhook_secret(active_key, secrets.token_urlsafe(24)):
+                    _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
+                    return
+            if "repo_url" in data or "ref" in data:
+                if "repo_url" in data:
+                    ru = str(data.get("repo_url") or "").strip()
+                    if ru and not is_http_git_clone_url(ru):
+                        _send_json(
+                            self,
+                            400,
+                            {
+                                "ok": False,
+                                "error": "repo_url must start with http:// or https:// and include a path (clone URL, not a secret token).",
+                            },
+                        )
+                        return
+                if not app_store.update_knowledge_base_webhook_source(
+                    active_key,
+                    repo_url=str(data.get("repo_url") or "").strip() if "repo_url" in data else None,
+                    ref=str(data.get("ref") or "").strip() if "ref" in data else None,
+                ):
                     _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
                     return
             _send_json(self, 200, {"ok": True, "name": active_key})
@@ -1324,11 +1854,50 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
             desc_raw = str(data.get("description") or "").strip()
             readme_raw = str(data.get("readme_md") or "").strip()
             upload_id = data.get("upload_id")
-            if not name_raw or not upload_id or not desc_raw:
+            source_type = str(data.get("source_type") or "tar").strip().lower() or "tar"
+            webhook_provider = str(data.get("webhook_provider") or "").strip().lower()
+            webhook_secret = str(data.get("webhook_secret") or "").strip()
+            webhook_repo_url = str(data.get("repo_url") or "").strip()
+            webhook_ref = str(data.get("ref") or "").strip()
+            if not name_raw or not desc_raw:
+                _send_json(self, 400, {"ok": False, "error": "JSON must include non-empty name and description"})
+                return
+            if source_type not in ("tar", "webhook"):
+                _send_json(self, 400, {"ok": False, "error": "source_type must be tar or webhook"})
+                return
+            if source_type == "tar" and not upload_id:
                 _send_json(
                     self,
                     400,
-                    {"ok": False, "error": "JSON must include non-empty name, description and upload_id"},
+                    {"ok": False, "error": "JSON must include non-empty upload_id for tar build"},
+                )
+                return
+            if source_type == "webhook" and webhook_provider not in ("", "gitlab", "github"):
+                _send_json(self, 400, {"ok": False, "error": "webhook_provider must be gitlab or github"})
+                return
+            if source_type == "webhook" and not webhook_secret:
+                webhook_secret = secrets.token_urlsafe(24)
+            if source_type == "webhook" and not webhook_repo_url:
+                _send_json(self, 400, {"ok": False, "error": "repo_url is required for webhook first build"})
+                return
+            if source_type == "webhook" and not is_http_git_clone_url(webhook_repo_url):
+                _send_json(
+                    self,
+                    400,
+                    {
+                        "ok": False,
+                        "error": "repo_url must be an http(s) Git remote (e.g. https://gitlab.com/group/project.git), not a token or SSH URL.",
+                    },
+                )
+                return
+            if source_type == "webhook" and not webhook_ref:
+                _send_json(
+                    self,
+                    400,
+                    {
+                        "ok": False,
+                        "error": "ref is required for webhook builds (branch name, e.g. main or refs/heads/main)",
+                    },
                 )
                 return
             try:
@@ -1337,21 +1906,86 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 _send_json(self, 400, {"ok": False, "error": str(e)})
                 return
 
-            n_active = app_store.count_user_upload_tasks_active(int(owner_user_id))
-            if n_active >= _MAX_USER_UPLOAD_JOBS:
-                _send_json(
-                    self,
-                    429,
-                    {
-                        "ok": False,
-                        "error": "Too many upload build jobs in queue or running (max 3). "
-                        "Finish, cancel one, or wait.",
-                    },
-                )
-                return
+            if source_type == "tar":
+                n_active = app_store.count_user_upload_tasks_active(int(owner_user_id))
+                if n_active >= _MAX_USER_UPLOAD_JOBS:
+                    _send_json(
+                        self,
+                        429,
+                        {
+                            "ok": False,
+                            "error": "Too many upload build jobs in queue or running (max 3). "
+                            "Finish, cancel one, or wait.",
+                        },
+                    )
+                    return
 
             existing_ready = app_store.get_knowledge_base(index_name)
             is_update = existing_ready is not None
+
+            if source_type == "webhook":
+                if is_update or app_store.knowledge_base_name_taken(index_name):
+                    _send_json(self, 409, {"ok": False, "error": "Knowledge base name already taken"})
+                    return
+                wh_prov = webhook_provider or "gitlab"
+                if wh_prov not in ("gitlab", "github"):
+                    wh_prov = "gitlab"
+                final_sqlite = str(
+                    ((root / "data" / f"{safe_sqlite_basename(index_name)}.sqlite").resolve())
+                )
+                try:
+                    app_store.create_pending_knowledge_base(
+                        name=index_name,
+                        description=desc_raw,
+                        readme_md=readme_raw,
+                        db_path=final_sqlite,
+                        owner_id=int(owner_user_id),
+                        is_public=bool(data.get("is_public", False)),
+                        icon=str(data.get("icon") or "book").strip() or "book",
+                        source_type="webhook",
+                        webhook_provider=wh_prov,
+                        webhook_secret=webhook_secret,
+                        webhook_repo_url=webhook_repo_url,
+                        webhook_ref=webhook_ref,
+                    )
+                except ValueError as e:
+                    _send_json(self, 409, {"ok": False, "error": str(e)})
+                    return
+                job_id = secrets.token_hex(12)
+                payload = {
+                    "description": desc_raw,
+                    "readme_md": readme_raw,
+                    "is_public": bool(data.get("is_public", False)),
+                    "icon": str(data.get("icon") or "book").strip() or "book",
+                    "repo_url": webhook_repo_url,
+                    "ref": webhook_ref,
+                    "checkout_sha": "",
+                }
+                try:
+                    app_store.enqueue_build_job(
+                        job_id=job_id,
+                        user_id=int(owner_user_id),
+                        task_kind="webhook",
+                        op="create",
+                        kb_name=index_name,
+                        upload_id=secrets.token_hex(12),
+                        payload=payload,
+                    )
+                except Exception as e:
+                    app_store.delete_knowledge_base(index_name)
+                    _send_json(self, 500, {"ok": False, "error": str(e)})
+                    return
+                wake_build_worker()
+                _send_json(
+                    self,
+                    202,
+                    {
+                        "ok": True,
+                        "job_id": job_id,
+                        "webhook_url": self._webhook_url_for_kb(index_name),
+                    },
+                )
+                return
 
             if is_update:
                 perm = app_store.permission_for(int(owner_user_id), index_name)
@@ -1387,6 +2021,9 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                         owner_id=int(owner_user_id),
                         is_public=bool(data.get("is_public", False)),
                         icon=str(data.get("icon") or "book").strip() or "book",
+                        source_type="tar",
+                        webhook_provider="",
+                        webhook_secret="",
                     )
                 except ValueError as e:
                     _send_json(self, 409, {"ok": False, "error": str(e)})

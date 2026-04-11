@@ -30,6 +30,11 @@ class KBRecord:
     is_public: bool
     list_color_idx: int
     icon: str
+    source_type: str
+    webhook_provider: str
+    webhook_secret: str
+    webhook_repo_url: str
+    webhook_ref: str
     owner_username: str
     owner_has_avatar: bool
     permission: KBPermission
@@ -62,6 +67,11 @@ class AppStore(Protocol):
         owner_id: int,
         is_public: bool = False,
         icon: str = "book",
+        source_type: str = "tar",
+        webhook_provider: str = "",
+        webhook_secret: str = "",
+        webhook_repo_url: str = "",
+        webhook_ref: str = "",
     ) -> KBRecord: ...
 
     def get_knowledge_base(self, name: str) -> KBRecord | None: ...
@@ -77,6 +87,12 @@ class AppStore(Protocol):
     def update_knowledge_base_public(self, name: str, is_public: bool) -> bool: ...
 
     def update_knowledge_base_icon(self, name: str, icon: str) -> bool: ...
+
+    def update_knowledge_base_webhook_secret(self, name: str, secret: str) -> bool: ...
+
+    def update_knowledge_base_webhook_source(
+        self, name: str, *, repo_url: str | None = None, ref: str | None = None
+    ) -> bool: ...
 
     def save_kb_icon(self, kb_name: str, mime: str, body: bytes) -> bool: ...
 
@@ -117,6 +133,8 @@ class AppStore(Protocol):
 
     def list_owned_and_subscribed_knowledge_bases_for_user(self, user_id: int) -> list[KBRecord]: ...
 
+    def get_kb_record_any_state(self, name: str) -> KBRecord | None: ...
+
     def get_api_key_owner_user_id(self, key_value: str) -> int | None: ...
 
     def list_api_keys_for_user(self, user_id: int) -> list[dict]: ...
@@ -140,3 +158,11 @@ class AppStore(Protocol):
     def load_avatar(self, user_id: int) -> tuple[str, bytes] | None: ...
 
     def clear_avatar(self, user_id: int) -> None: ...
+
+    def set_user_gitlab_pat(self, user_id: int, pat: str) -> None: ...
+
+    def get_user_gitlab_pat(self, user_id: int) -> str: ...
+
+    def set_user_github_pat(self, user_id: int, pat: str) -> None: ...
+
+    def get_user_github_pat(self, user_id: int) -> str: ...

@@ -2,11 +2,14 @@ const AUTH_TOKEN_KEY = "bcecli.auth.token";
 const STATE_KEY = "bcecli.frontend.state.v3";
 /** Persisted interface language (mirrored from state for stable preference). */
 const UI_LANG_KEY = "bcecli.ui.lang";
+/** Persisted UI theme: "dark" | "light" (mirrored for early paint). */
+const UI_THEME_KEY = "bcecli.ui.theme";
 /** Served from Vite `public/` → static root */
 const DEFAULT_AVATAR_URL = "/default-avatar.svg";
 const DEFAULT_KB_ICON_URL = "/default-kb.svg";
 
 let currentLang = "en";
+let currentTheme = "dark";
 let stagedUploadId = null;
 /** Manage-page corpus update: staged tar (not persisted across reload). */
 let manageCorpusUploadId = null;
@@ -144,12 +147,33 @@ const i18n = {
     confirmLogout: "Log out now?",
     newKb: "Add knowledge base",
     addKbSubtitle: "Upload a tar archive, then name and describe your index.",
+    kbTypeLabel: "Knowledge base type",
+    kbTypeTar: "Compressed archive (.tar)",
+    kbTypeWebhook: "Webhook (GitLab / GitHub)",
     indexName: "Name",
     indexDescription: "Description",
     indexReadme: "README",
     readmePreview: "Preview",
     readmeEdit: "Edit",
     archiveLabel: "Archive (.tar / .tar.gz / .tgz)",
+    webhookAddKbSectionTitle: "Webhook & repository (HTTP clone URL, provider, secret)",
+    webhookProviderLabel: "Webhook provider",
+    webhookProviderGitlab: "GitLab",
+    webhookProviderGithub: "GitHub",
+    webhookUrlLabel: "Webhook URL",
+    webhookSecretLabel: "Secret token",
+    webhookRepoUrlLabel: "Repository URL (HTTP/HTTPS)",
+    webhookBranchLabel: "Branch to build",
+    webhookBranchPlaceholder: "e.g. main or refs/heads/main",
+    webhookRepoUrlPlaceholder: "e.g. https://github.com/org/repo.git or GitLab HTTP URL",
+    webhookSecretPlaceholderGitlab: "Optional; GitLab sends it as X-Gitlab-Token",
+    webhookSecretPlaceholderGithub: "Same secret as in GitHub webhook settings (HMAC SHA-256)",
+    webhookSecretRegenerate: "Regenerate secret",
+    webhookConfigured: "Webhook configured. Build starts when push events arrive.",
+    webhookSaveRepo: "Save repository settings",
+    webhookManualPull: "Pull now",
+    webhookManualPullHint:
+      "Queues the same build as a push webhook. Uses the repository URL saved below (updated automatically on each push).",
     chooseFile: "Choose file",
     noFileChosen: "No file chosen",
     uploadProgress: "Upload",
@@ -183,6 +207,8 @@ const i18n = {
     removeMember: "Remove",
     saveDescription: "Save description",
     renameKb: "Rename knowledge base",
+    renameKbWebhookWarning:
+      "Renaming changes the webhook URL path (the last segment matches the knowledge base name).",
     newKbName: "New knowledge base name",
     saveName: "Save name",
     renameDone: "Knowledge base renamed.",
@@ -191,6 +217,7 @@ const i18n = {
     refresh: "Refresh",
     ready: "Ready.",
     requireFields: "Name and description are required.",
+    requireWebhookBranch: "Enter the branch to clone for webhook builds.",
     requireStaged: "Upload a tar archive first.",
     requireStagedManage: "Upload a tar archive first, then rebuild the index.",
     requireDescriptionForRebuild: "Add a non-empty description (above) before rebuilding.",
@@ -204,6 +231,7 @@ const i18n = {
     updateCorpusRebuild: "Rebuild index",
     kbManageCorpusStaged: "Tar archive staged for this library — click rebuild when ready.",
     navTasks: "Tasks",
+    navSkill: "SKILL.md",
     tasksTitle: "Build tasks",
     tasksSubtitle: "Queued and running index jobs for your account.",
     tasksEmpty: "No tasks yet.",
@@ -225,11 +253,15 @@ const i18n = {
     taskCardRunningHint: "Build in progress",
     taskBackToList: "Back to task list",
     taskNotFoundOrDone: "This task is no longer available.",
+    skillTitle: "SKILL.md",
+    skillSubtitle: "Project skill document",
+    skillDownload: "Download ZIP",
     taskJobRemovedAfterDone: "Build finished. Returning to tasks.",
     taskCancelledRemoved: "Task cancelled.",
     buildDone: (n) => `Built "${n}".`,
     phase_queued: "Queued",
     phase_extract: "Extract",
+    phase_git_clone: "Git clone",
     phase_load: "Load",
     phase_chunk: "Chunk",
     phase_embed: "Embed",
@@ -241,16 +273,35 @@ const i18n = {
     sqliteMissing: "Index file missing",
     navAccount: "Account",
     interfaceLanguage: "Language",
+    preferencesTitle: "Preferences",
+    themeLabel: "Appearance",
+    themeDark: "Dark",
+    themeLight: "Light",
     accountTitle: "Account settings",
     accountSubtitle: "Profile photo",
     apiKeysTitle: "API keys",
-    apiKeyName: "Label (optional)",
+    repoPatSectionTitle: "Repository PATs",
+    repoPatSectionBlurb: "Used to clone private repos when building from GitLab or GitHub webhooks.",
+    gitlabPatSubTitle: "GitLab",
+    gitlabPatLabel: "Personal access token (read_repository)",
+    gitlabPatPlaceholder: "glpat-...",
+    gitlabPatSave: "Save token",
+    gitlabPatSaved: "GitLab token saved.",
+    gitlabPatConfigured: "GitLab token is configured.",
+    gitlabPatNotConfigured: "GitLab token is not configured.",
+    githubPatSubTitle: "GitHub",
+    githubPatLabel: "Fine-grained or classic PAT (repo read / contents)",
+    githubPatPlaceholder: "github_pat_... or ghp_...",
+    githubPatSave: "Save token",
+    githubPatSaved: "GitHub token saved.",
+    githubPatConfigured: "GitHub token is configured.",
+    githubPatNotConfigured: "GitHub token is not configured.",
     apiKeyCreate: "Create API key",
     apiKeyDelete: "Delete",
     apiKeyEyeShow: "Show",
     apiKeyEyeHide: "Hide",
     apiKeyEmpty: "No API keys yet.",
-    apiKeyMaxHint: "Up to 5 keys. New keys start with sk-",
+    apiKeyMaxHint: "Up to 3 keys. New keys start with sk-",
     apiKeyCreateDone: "API key created.",
     apiKeyDeleteDone: "API key deleted.",
     confirmDeleteApiKey: "Delete this API key?",
@@ -315,12 +366,33 @@ const i18n = {
     confirmLogout: "确认退出登录？",
     newKb: "添加知识库",
     addKbSubtitle: "上传 tar 归档，填写名称与描述后构建索引。",
+    kbTypeLabel: "知识库类型",
+    kbTypeTar: "压缩文件（.tar）",
+    kbTypeWebhook: "Webhook（GitLab / GitHub）",
     indexName: "名称",
     indexDescription: "描述",
     indexReadme: "README",
     readmePreview: "预览",
     readmeEdit: "编辑",
     archiveLabel: "归档（.tar / .tar.gz / .tgz）",
+    webhookAddKbSectionTitle: "Webhook 与仓库（HTTP 克隆地址、平台、Secret）",
+    webhookProviderLabel: "Webhook 平台",
+    webhookProviderGitlab: "GitLab",
+    webhookProviderGithub: "GitHub",
+    webhookUrlLabel: "Webhook 链接",
+    webhookSecretLabel: "Secret Token",
+    webhookRepoUrlLabel: "仓库地址（HTTP/HTTPS）",
+    webhookBranchLabel: "构建分支",
+    webhookBranchPlaceholder: "例如 main 或 refs/heads/main",
+    webhookRepoUrlPlaceholder: "例如：https://github.com/org/repo.git 或 GitLab HTTP 地址",
+    webhookSecretPlaceholderGitlab: "可选；GitLab 以 X-Gitlab-Token 请求头发送",
+    webhookSecretPlaceholderGithub: "与 GitHub Webhook 里填写的 Secret 一致（HMAC SHA-256）",
+    webhookSecretRegenerate: "重新生成 Secret",
+    webhookConfigured: "Webhook 配置完成，后续 push 事件会触发构建。",
+    webhookSaveRepo: "保存仓库设置",
+    webhookManualPull: "立即拉取",
+    webhookManualPullHint:
+      "与 push webhook 相同的构建任务；使用下方保存的仓库地址（每次 push 会自动更新）。",
     chooseFile: "选择文件",
     noFileChosen: "未选择文件",
     uploadProgress: "上传",
@@ -354,6 +426,8 @@ const i18n = {
     removeMember: "移除",
     saveDescription: "保存描述",
     renameKb: "重命名知识库",
+    renameKbWebhookWarning:
+      "重命名后 Webhook 地址会变化（URL 路径末尾与知识库名一致）。",
     newKbName: "新的知识库名称",
     saveName: "保存名称",
     renameDone: "知识库已重命名。",
@@ -362,6 +436,7 @@ const i18n = {
     refresh: "刷新",
     ready: "就绪。",
     requireFields: "请填写名称和描述。",
+    requireWebhookBranch: "请填写 Webhook 克隆所用的分支名称。",
     requireStaged: "请先上传 tar 并完成上传。",
     requireStagedManage: "请先上传 tar，再点击重建索引。",
     requireDescriptionForRebuild: "请先填写非空描述（上方描述框）后再重建。",
@@ -375,6 +450,7 @@ const i18n = {
     updateCorpusRebuild: "重建索引",
     kbManageCorpusStaged: "已为该知识库暂存 tar — 准备好后点击重建索引。",
     navTasks: "任务",
+    navSkill: "SKILL.md",
     tasksTitle: "构建任务",
     tasksSubtitle: "当前账号的排队与运行中的索引任务。",
     tasksEmpty: "暂无任务。",
@@ -396,11 +472,15 @@ const i18n = {
     taskCardRunningHint: "正在构建",
     taskBackToList: "返回任务列表",
     taskNotFoundOrDone: "该任务已结束或不存在。",
+    skillTitle: "SKILL.md",
+    skillSubtitle: "项目技能文档",
+    skillDownload: "下载 ZIP",
     taskJobRemovedAfterDone: "构建已完成，正在返回任务列表。",
     taskCancelledRemoved: "任务已取消。",
     buildDone: (n) => `已构建「${n}」。`,
     phase_queued: "排队",
     phase_extract: "解压",
+    phase_git_clone: "拉取仓库",
     phase_load: "加载",
     phase_chunk: "分块",
     phase_embed: "向量化",
@@ -412,16 +492,35 @@ const i18n = {
     sqliteMissing: "索引文件缺失",
     navAccount: "账户",
     interfaceLanguage: "界面语言",
+    preferencesTitle: "偏好设置",
+    themeLabel: "界面风格",
+    themeDark: "暗色",
+    themeLight: "亮色",
     accountTitle: "账户设置",
     accountSubtitle: "头像",
     apiKeysTitle: "API Key 列表",
-    apiKeyName: "备注（可选）",
+    repoPatSectionTitle: "代码仓库访问令牌",
+    repoPatSectionBlurb: "Webhook 构建私有仓库时，用于 GitLab / GitHub 的 HTTP 克隆鉴权。",
+    gitlabPatSubTitle: "GitLab",
+    gitlabPatLabel: "Personal access token（read_repository）",
+    gitlabPatPlaceholder: "glpat-...",
+    gitlabPatSave: "保存令牌",
+    gitlabPatSaved: "GitLab 令牌已保存。",
+    gitlabPatConfigured: "GitLab 令牌已配置。",
+    gitlabPatNotConfigured: "GitLab 令牌未配置。",
+    githubPatSubTitle: "GitHub",
+    githubPatLabel: "Fine-grained 或 classic PAT（需能读仓库内容）",
+    githubPatPlaceholder: "github_pat_... 或 ghp_...",
+    githubPatSave: "保存令牌",
+    githubPatSaved: "GitHub 令牌已保存。",
+    githubPatConfigured: "GitHub 令牌已配置。",
+    githubPatNotConfigured: "GitHub 令牌未配置。",
     apiKeyCreate: "创建 API Key",
     apiKeyDelete: "删除",
     apiKeyEyeShow: "显示",
     apiKeyEyeHide: "隐藏",
     apiKeyEmpty: "暂无 API Key。",
-    apiKeyMaxHint: "最多 5 条，新建前缀为 sk-",
+    apiKeyMaxHint: "最多 3 条，新建前缀为 sk-",
     apiKeyCreateDone: "API Key 已创建。",
     apiKeyDeleteDone: "API Key 已删除。",
     confirmDeleteApiKey: "确认删除这条 API Key？",
@@ -547,6 +646,7 @@ function parseRoute() {
   if (p === "/profile") return { type: "profile" };
   if (p === "/change-password") return { type: "changePassword" };
   if (p === "/tasks" || p === "/tasks/") return { type: "tasks" };
+  if (p === "/skill" || p === "/skill/") return { type: "skill" };
   if (p.startsWith("/tasks/")) {
     const rest = p
       .slice("/tasks/".length)
@@ -599,10 +699,12 @@ function saveState() {
   try {
     const payload = JSON.stringify({
       lang: currentLang,
+      theme: currentTheme,
       stagedUploadId,
     });
     localStorage.setItem(STATE_KEY, payload);
     localStorage.setItem(UI_LANG_KEY, currentLang);
+    localStorage.setItem(UI_THEME_KEY, currentTheme);
   } catch {
     /* ignore */
   }
@@ -615,6 +717,17 @@ function loadState() {
   } catch {
     return null;
   }
+}
+
+function applyTheme() {
+  if (currentTheme === "light") document.documentElement.setAttribute("data-theme", "light");
+  else document.documentElement.removeAttribute("data-theme");
+}
+
+function setTheme(theme) {
+  currentTheme = theme === "light" ? "light" : "dark";
+  applyTheme();
+  saveState();
 }
 
 function setLang(lang) {
@@ -640,25 +753,40 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function sanitizeFenceLang(s) {
+  const t = String(s || "").trim();
+  if (!t || !/^[a-zA-Z][\w+#.-]{0,31}$/.test(t)) return "";
+  return t;
+}
+
 function markdownToHtml(md) {
   const src = String(md || "").replace(/\r\n/g, "\n");
   const lines = src.split("\n");
   const out = [];
   let inCode = false;
+  let codeLines = [];
+  let fenceLang = "";
   for (const raw of lines) {
     const line = raw;
-    if (line.trim().startsWith("```")) {
+    const fenceMatch = line.trim().match(/^```(\S*)\s*$/);
+    if (fenceMatch) {
       if (!inCode) {
         inCode = true;
-        out.push("<pre><code>");
+        fenceLang = sanitizeFenceLang(fenceMatch[1]);
+        codeLines = [];
       } else {
+        const langClass = fenceLang ? ` language-${esc(fenceLang)}` : "";
+        out.push(
+          `<pre class="md-fence"><code class="md-fence-code${langClass}">${codeLines.map(esc).join("\n")}</code></pre>`,
+        );
         inCode = false;
-        out.push("</code></pre>");
+        codeLines = [];
+        fenceLang = "";
       }
       continue;
     }
     if (inCode) {
-      out.push(`${esc(line)}\n`);
+      codeLines.push(line);
       continue;
     }
     if (/^###\s+/.test(line)) {
@@ -688,13 +816,16 @@ function markdownToHtml(md) {
     let html = esc(line)
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
       .replace(/\*(.+?)\*/g, "<em>$1</em>")
-      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>')
       .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
     out.push(`<p>${html}</p>`);
   }
   let merged = out.join("\n");
   merged = merged.replace(/(<li>[\s\S]*?<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`);
-  if (inCode) merged += "</code></pre>";
+  if (inCode) {
+    const langClass = fenceLang ? ` language-${esc(fenceLang)}` : "";
+    merged += `<pre class="md-fence"><code class="md-fence-code${langClass}">${codeLines.map(esc).join("\n")}</code></pre>`;
+  }
   return merged;
 }
 
@@ -897,6 +1028,7 @@ function renderShellSidebar(active) {
   const myCl = active === "my" ? " active" : "";
   const addCl = active === "add" ? " active" : "";
   const tasksCl = active === "tasks" ? " active" : "";
+  const skillCl = active === "skill" ? " active" : "";
   const profCl = active === "profile" ? " active" : "";
   return `
     <aside class="sidebar" aria-label="${esc(T("navSection"))}">
@@ -905,6 +1037,7 @@ function renderShellSidebar(active) {
       <button type="button" class="nav-item${myCl}" data-nav="my">${esc(T("navMyKb"))}</button>
       <button type="button" class="nav-item${addCl}" data-nav="add">${esc(T("navAddKb"))}</button>
       <button type="button" class="nav-item${tasksCl}" data-nav="tasks">${esc(T("navTasks"))}</button>
+      <button type="button" class="nav-item${skillCl}" data-nav="skill">${esc(T("navSkill"))}</button>
       <button type="button" class="nav-item${profCl}" data-nav="profile">${esc(T("navAccount"))}</button>
       <div class="sidebar-spacer" aria-hidden="true"></div>
       <button type="button" class="nav-item nav-item--logout" id="sidebar-logout-btn">${esc(T("logout"))}</button>
@@ -932,6 +1065,30 @@ function bindInterfaceLangSelect(selectId) {
   const el = document.getElementById(selectId);
   el?.addEventListener("change", () => {
     if (el.value === "en" || el.value === "zh") setLang(el.value);
+  });
+}
+
+function renderThemeSelect(selectId, omitOuterLabel = false) {
+  const darkSel = currentTheme === "dark" ? " selected" : "";
+  const lightSel = currentTheme === "light" ? " selected" : "";
+  const sel = `<select id="${esc(selectId)}" class="lang-select" aria-label="${esc(T("themeLabel"))}">
+        <option value="dark"${darkSel}>${esc(T("themeDark"))}</option>
+        <option value="light"${lightSel}>${esc(T("themeLight"))}</option>
+      </select>`;
+  if (omitOuterLabel) {
+    return `<div class="lang-select-wrap lang-select-wrap--bare">${sel}</div>`;
+  }
+  return `
+    <label class="lang-select-wrap">
+      <span class="lang-select-label">${esc(T("themeLabel"))}</span>
+      ${sel}
+    </label>`;
+}
+
+function bindThemeSelect(selectId) {
+  const el = document.getElementById(selectId);
+  el?.addEventListener("change", () => {
+    if (el.value === "dark" || el.value === "light") setTheme(el.value);
   });
 }
 
@@ -984,6 +1141,7 @@ function bindShellChrome(user) {
       if (n === "my") go("/my-kb");
       if (n === "add") go("/add-kb");
       if (n === "tasks") go("/tasks");
+      if (n === "skill") go("/skill");
       if (n === "profile") go("/profile");
     });
   });
@@ -995,6 +1153,101 @@ function bindUploadForm() {
   const pickBtn = document.getElementById("pick-archive-btn");
   const archiveInput = document.getElementById("kb-archive");
   const pickedFileNameEl = document.getElementById("picked-file-name");
+  const sourceTypeEl = document.getElementById("kb-source-type");
+  const tarBlock = document.getElementById("kb-source-tar-block");
+  const webhookBlock = document.getElementById("kb-source-webhook-block");
+  const uploadBlock = document.getElementById("kb-upload-progress-block");
+  const webhookUrlInput = document.getElementById("kb-webhook-url");
+  const webhookSecretInput = document.getElementById("kb-webhook-secret");
+  const webhookSecretEyeBtn = document.getElementById("kb-webhook-secret-eye");
+  const webhookSecretRegenBtn = document.getElementById("kb-webhook-secret-regen");
+  const webhookRepoUrlInput = document.getElementById("kb-webhook-repo-url");
+  const webhookRefInput = document.getElementById("kb-webhook-ref");
+  const webhookProviderEl = document.getElementById("kb-webhook-provider");
+  const nameInput = document.getElementById("kb-name");
+  const sourceSectionTitleEl = document.getElementById("kb-source-section-title");
+  let webhookSecretRaw = "";
+  let webhookSecretVisible = false;
+  const webhookBases = {
+    gitlab: `${window.location.origin}/api/webhooks/gitlab/`,
+    github: `${window.location.origin}/api/webhooks/github/`,
+  };
+  const refreshWebhookSecretInput = () => {
+    if (!webhookSecretInput) return;
+    webhookSecretInput.value = webhookSecretVisible ? webhookSecretRaw : "*".repeat(String(webhookSecretRaw || "").length);
+    webhookSecretEyeBtn.textContent = webhookSecretVisible ? T("apiKeyEyeHide") : T("apiKeyEyeShow");
+  };
+  const generateWebhookSecret = async () => {
+    const d = await fetchJSON("/api/user/webhook-secret/generate");
+    webhookSecretRaw = String(d?.secret || "");
+    webhookSecretVisible = false;
+    refreshWebhookSecretInput();
+  };
+  let webhookBaseUrl = webhookBases.gitlab;
+  fetchJSON("/api/webhook-base")
+    .then((r) => {
+      const bases = r?.bases;
+      if (bases && typeof bases === "object") {
+        const g = String(bases.gitlab || "").trim();
+        const h = String(bases.github || "").trim();
+        if (g) webhookBases.gitlab = g.endsWith("/") ? g : `${g}/`;
+        if (h) webhookBases.github = h.endsWith("/") ? h : `${h}/`;
+      }
+      const b = String(r?.base_url || "").trim();
+      if (b) webhookBases.gitlab = b.endsWith("/") ? b : `${b}/`;
+      applyWebhookProviderUi();
+    })
+    .catch(() => {
+      /* keep defaults */
+    });
+  const buildWebhookUrl = () => {
+    const kb = (nameInput?.value || "").trim();
+    const seg = kb ? encodeURIComponent(kb) : "<kb-name>";
+    const base = webhookBaseUrl.endsWith("/") ? webhookBaseUrl : `${webhookBaseUrl}/`;
+    return `${base}${seg}`;
+  };
+  const refreshWebhookUrl = () => {
+    if (webhookUrlInput) webhookUrlInput.value = buildWebhookUrl();
+  };
+  const applyWebhookProviderUi = () => {
+    const prov = webhookProviderEl?.value === "github" ? "github" : "gitlab";
+    webhookBaseUrl = webhookBases[prov] || webhookBases.gitlab;
+    if (webhookSecretInput) {
+      webhookSecretInput.placeholder =
+        prov === "github" ? T("webhookSecretPlaceholderGithub") : T("webhookSecretPlaceholderGitlab");
+    }
+    refreshWebhookUrl();
+  };
+  const syncSourceTypeUi = () => {
+    const tp = sourceTypeEl?.value === "webhook" ? "webhook" : "tar";
+    if (tarBlock) tarBlock.style.display = tp === "tar" ? "" : "none";
+    if (uploadBlock) uploadBlock.style.display = tp === "tar" ? "" : "none";
+    if (webhookBlock) webhookBlock.style.display = tp === "webhook" ? "" : "none";
+    if (sourceSectionTitleEl) {
+      sourceSectionTitleEl.textContent = tp === "webhook" ? T("webhookAddKbSectionTitle") : T("archiveLabel");
+    }
+    applyWebhookProviderUi();
+    if (tp === "webhook" && !webhookSecretRaw) {
+      void generateWebhookSecret();
+    }
+  };
+  syncSourceTypeUi();
+  sourceTypeEl?.addEventListener("change", syncSourceTypeUi);
+  webhookProviderEl?.addEventListener("change", () => {
+    applyWebhookProviderUi();
+  });
+  nameInput?.addEventListener("input", refreshWebhookUrl);
+  webhookSecretEyeBtn?.addEventListener("click", () => {
+    webhookSecretVisible = !webhookSecretVisible;
+    refreshWebhookSecretInput();
+  });
+  webhookSecretRegenBtn?.addEventListener("click", async () => {
+    try {
+      await generateWebhookSecret();
+    } catch (e) {
+      setStatus(e.message, true);
+    }
+  });
   pickBtn?.addEventListener("click", () => archiveInput?.click());
   archiveInput?.addEventListener("change", () => {
     const f = archiveInput.files[0];
@@ -1016,8 +1269,15 @@ function bindUploadForm() {
     const name = document.getElementById("kb-name").value.trim();
     const description = document.getElementById("kb-description").value.trim();
     const readmeMd = document.getElementById("kb-readme").value.trim();
+    const sourceType = sourceTypeEl?.value === "webhook" ? "webhook" : "tar";
     if (!name || !description) return setStatus(T("requireFields"), true);
-    if (!stagedUploadId) return setStatus(T("requireStaged"), true);
+    if (sourceType === "tar" && !stagedUploadId) return setStatus(T("requireStaged"), true);
+    if (sourceType === "webhook" && !String(webhookRepoUrlInput?.value || "").trim()) {
+      return setStatus(T("requireFields"), true);
+    }
+    if (sourceType === "webhook" && !String(webhookRefInput?.value || "").trim()) {
+      return setStatus(T("requireWebhookBranch"), true);
+    }
     const submitBtn = document.getElementById("submit-btn");
     submitBtn.disabled = true;
     submitBtn.textContent = T("building");
@@ -1030,7 +1290,13 @@ function bindUploadForm() {
           name,
           description,
           readme_md: readmeMd,
-          upload_id: stagedUploadId,
+          upload_id: sourceType === "tar" ? stagedUploadId : undefined,
+          source_type: sourceType,
+          webhook_provider:
+            sourceType === "webhook" ? (webhookProviderEl?.value === "github" ? "github" : "gitlab") : undefined,
+          webhook_secret: sourceType === "webhook" ? webhookSecretRaw : undefined,
+          repo_url: sourceType === "webhook" ? String(webhookRepoUrlInput?.value || "").trim() : undefined,
+          ref: sourceType === "webhook" ? String(webhookRefInput?.value || "").trim() : undefined,
           is_public,
         }),
       });
@@ -1319,15 +1585,44 @@ async function renderAddKb(user) {
                 </div>
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
-                  <h2 class="kb-detail-block-title">${esc(T("archiveLabel"))}</h2>
-                  <input type="file" id="kb-archive" class="hidden-file-input" accept=".tar,.tgz,.tar.gz,.tar.bz2,.tar.xz,application/x-tar" />
-                  <div class="file-picker-row">
-                    <button type="button" class="secondary" id="pick-archive-btn">${esc(T("chooseFile"))}</button>
-                    <span id="picked-file-name">${esc(T("noFileChosen"))}</span>
-                  </div>
+                  <h2 class="kb-detail-block-title">${esc(T("kbTypeLabel"))}</h2>
+                  <label class="lang-select-wrap lang-select-wrap--bare">
+                    <select id="kb-source-type" class="lang-select" aria-label="${esc(T("kbTypeLabel"))}">
+                      <option value="tar">${esc(T("kbTypeTar"))}</option>
+                      <option value="webhook">${esc(T("kbTypeWebhook"))}</option>
+                    </select>
+                  </label>
                 </div>
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title" id="kb-source-section-title">${esc(T("archiveLabel"))}</h2>
+                  <div id="kb-source-tar-block">
+                    <input type="file" id="kb-archive" class="hidden-file-input" accept=".tar,.tgz,.tar.gz,.tar.bz2,.tar.xz,application/x-tar" />
+                    <div class="file-picker-row">
+                      <button type="button" class="secondary" id="pick-archive-btn">${esc(T("chooseFile"))}</button>
+                      <span id="picked-file-name">${esc(T("noFileChosen"))}</span>
+                    </div>
+                  </div>
+                  <div id="kb-source-webhook-block" style="display:none">
+                    <label class="lang-select-wrap lang-select-wrap--bare">
+                      <span class="lang-select-label">${esc(T("webhookProviderLabel"))}</span>
+                      <select id="kb-webhook-provider" class="lang-select" aria-label="${esc(T("webhookProviderLabel"))}">
+                        <option value="gitlab">${esc(T("webhookProviderGitlab"))}</option>
+                        <option value="github">${esc(T("webhookProviderGithub"))}</option>
+                      </select>
+                    </label>
+                    <label><span>${esc(T("webhookUrlLabel"))}</span><input id="kb-webhook-url" readonly /></label>
+                    <label><span>${esc(T("webhookRepoUrlLabel"))}</span><input id="kb-webhook-repo-url" placeholder="${esc(T("webhookRepoUrlPlaceholder"))}" /></label>
+                    <label><span>${esc(T("webhookBranchLabel"))}</span><input id="kb-webhook-ref" placeholder="${esc(T("webhookBranchPlaceholder"))}" autocomplete="off" /></label>
+                    <label><span>${esc(T("webhookSecretLabel"))}</span><input id="kb-webhook-secret" readonly placeholder="${esc(T("webhookSecretPlaceholderGitlab"))}" /></label>
+                    <p class="form-actions" style="margin-top:0.5rem">
+                      <button type="button" class="secondary" id="kb-webhook-secret-eye">${esc(T("apiKeyEyeShow"))}</button>
+                      <button type="button" class="secondary" id="kb-webhook-secret-regen">${esc(T("webhookSecretRegenerate"))}</button>
+                    </p>
+                  </div>
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block" id="kb-upload-progress-block">
                   <h2 class="kb-detail-block-title">${esc(T("uploadProgress"))}</h2>
                   <progress id="upload-progress" value="0" max="100"></progress>
                   <span id="upload-progress-text" class="muted small" style="display:inline-block;margin-top:8px">0%</span>
@@ -1430,6 +1725,12 @@ function maskApiKey(k) {
   return `${s.slice(0, 3)}${"*".repeat(Math.max(6, s.length - 7))}${s.slice(-4)}`;
 }
 
+function maskSameLength(s) {
+  const n = String(s || "").length;
+  if (n <= 0) return "";
+  return "*".repeat(n);
+}
+
 function renderApiKeyList(keys) {
   if (!keys?.length) return `<p class="muted small">${esc(T("apiKeyEmpty"))}</p>`;
   return `<ul class="api-key-list">
@@ -1452,11 +1753,31 @@ function renderApiKeyList(keys) {
 
 async function renderProfile(user) {
   let apiKeys = [];
+  let hasGitlabPat = false;
+  let gitlabPatRaw = "";
+  let hasGithubPat = false;
+  let githubPatRaw = "";
   try {
     const data = await fetchJSON("/api/user/api-keys");
     apiKeys = data.keys || [];
   } catch (e) {
     setStatus(e.message, true);
+  }
+  try {
+    const data = await fetchJSON("/api/user/gitlab-pat");
+    hasGitlabPat = !!data?.has_pat;
+    gitlabPatRaw = String(data?.pat || "");
+  } catch {
+    hasGitlabPat = false;
+    gitlabPatRaw = "";
+  }
+  try {
+    const data = await fetchJSON("/api/user/github-pat");
+    hasGithubPat = !!data?.has_pat;
+    githubPatRaw = String(data?.pat || "");
+  } catch {
+    hasGithubPat = false;
+    githubPatRaw = "";
   }
   appEl.innerHTML = `
     <div class="app-shell">
@@ -1485,8 +1806,17 @@ async function renderProfile(user) {
                 </div>
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
-                  <h2 class="kb-detail-block-title">${esc(T("interfaceLanguage"))}</h2>
-                  ${renderInterfaceLangSelect("profile-lang-select", true)}
+                  <h2 class="kb-detail-block-title">${esc(T("preferencesTitle"))}</h2>
+                  <div class="preferences-stack">
+                    <div class="preference-row">
+                      <span class="lang-select-label">${esc(T("interfaceLanguage"))}</span>
+                      ${renderInterfaceLangSelect("profile-lang-select", true)}
+                    </div>
+                    <div class="preference-row">
+                      <span class="lang-select-label">${esc(T("themeLabel"))}</span>
+                      ${renderThemeSelect("profile-theme-select", true)}
+                    </div>
+                  </div>
                 </div>
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
@@ -1494,8 +1824,24 @@ async function renderProfile(user) {
                   <p class="muted small profile-apikey-hint">${esc(T("apiKeyMaxHint"))}</p>
                   <div id="api-key-list-wrap">${renderApiKeyList(apiKeys)}</div>
                   <div class="api-key-create">
-                    <label><span>${esc(T("apiKeyName"))}</span><input id="api-key-name" /></label>
                     <button type="button" id="api-key-create-btn">${esc(T("apiKeyCreate"))}</button>
+                  </div>
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block">
+                  <h2 class="kb-detail-block-title">${esc(T("repoPatSectionTitle"))}</h2>
+                  <p class="muted small">${esc(T("repoPatSectionBlurb"))}</p>
+                  <div class="repo-pat-subsection">
+                    <h3 class="repo-pat-provider-title">${esc(T("gitlabPatSubTitle"))}</h3>
+                    <p class="muted small">${esc(hasGitlabPat ? T("gitlabPatConfigured") : T("gitlabPatNotConfigured"))}</p>
+                    <label><span>${esc(T("gitlabPatLabel"))}</span><input id="gitlab-pat-input" placeholder="${esc(T("gitlabPatPlaceholder"))}" value="${esc(maskSameLength(gitlabPatRaw))}" /></label>
+                    <p class="form-actions" style="margin-top:0.75rem"><button type="button" id="gitlab-pat-save-btn">${esc(T("gitlabPatSave"))}</button></p>
+                  </div>
+                  <div class="repo-pat-subsection">
+                    <h3 class="repo-pat-provider-title">${esc(T("githubPatSubTitle"))}</h3>
+                    <p class="muted small">${esc(hasGithubPat ? T("githubPatConfigured") : T("githubPatNotConfigured"))}</p>
+                    <label><span>${esc(T("githubPatLabel"))}</span><input id="github-pat-input" placeholder="${esc(T("githubPatPlaceholder"))}" value="${esc(maskSameLength(githubPatRaw))}" /></label>
+                    <p class="form-actions" style="margin-top:0.75rem"><button type="button" id="github-pat-save-btn">${esc(T("githubPatSave"))}</button></p>
                   </div>
                 </div>
               </div>
@@ -1510,6 +1856,7 @@ async function renderProfile(user) {
   void refreshTopbarAvatar(user);
   await hydrateProfileAvatar(user);
   bindInterfaceLangSelect("profile-lang-select");
+  bindThemeSelect("profile-theme-select");
 
   const fileInput = document.getElementById("profile-avatar-file");
   const msg = document.getElementById("profile-msg");
@@ -1554,12 +1901,11 @@ async function renderProfile(user) {
   });
 
   document.getElementById("api-key-create-btn")?.addEventListener("click", async () => {
-    const name = document.getElementById("api-key-name")?.value?.trim() || "";
     try {
       await fetchJSON("/api/user/api-keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: "{}",
       });
       setStatus(T("apiKeyCreateDone"));
       await renderProfile(user);
@@ -1591,6 +1937,40 @@ async function renderProfile(user) {
       } catch (err) {
         setStatus(err.message, true);
       }
+    }
+  });
+
+  document.getElementById("gitlab-pat-save-btn")?.addEventListener("click", async () => {
+    const patInputEl = document.getElementById("gitlab-pat-input");
+    const entered = String(patInputEl?.value || "");
+    const pat = entered === maskSameLength(gitlabPatRaw) ? gitlabPatRaw : entered.trim();
+    try {
+      await fetchJSON("/api/user/gitlab-pat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pat }),
+      });
+      setStatus(T("gitlabPatSaved"));
+      await renderProfile(user);
+    } catch (e) {
+      setStatus(e.message, true);
+    }
+  });
+
+  document.getElementById("github-pat-save-btn")?.addEventListener("click", async () => {
+    const patInputEl = document.getElementById("github-pat-input");
+    const entered = String(patInputEl?.value || "");
+    const pat = entered === maskSameLength(githubPatRaw) ? githubPatRaw : entered.trim();
+    try {
+      await fetchJSON("/api/user/github-pat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pat }),
+      });
+      setStatus(T("githubPatSaved"));
+      await renderProfile(user);
+    } catch (e) {
+      setStatus(e.message, true);
     }
   });
 }
@@ -1935,6 +2315,8 @@ async function renderKbManage(user, name) {
   const canDelete = !!perm.can_delete;
   const legacy = !!meta?.legacy_registry_only;
   const isPub = !!meta?.is_public;
+  const sourceType = String(meta?.source_type || "tar");
+  const isWebhook = sourceType === "webhook";
 
   if (manageCorpusUploadId && manageCorpusKbFor && manageCorpusKbFor !== name) {
     manageCorpusUploadId = null;
@@ -2025,7 +2407,7 @@ async function renderKbManage(user, name) {
         </div>`;
 
   const corpusUpdateSection =
-    isOwner && !legacy
+    isOwner && !legacy && !isWebhook
       ? `<div class="kb-detail-block">
           <h2 class="kb-detail-block-title">${esc(T("kbUpdateCorpusTitle"))}</h2>
           <div class="archive-row manage-archive-row">
@@ -2038,6 +2420,26 @@ async function renderKbManage(user, name) {
           <span id="kb-manage-corpus-upload-text">0%</span>
           <p class="muted small">${esc(T("taskEnqueuedHint"))}</p>
           <p class="form-actions" style="margin-top:0.75rem"><button type="button" id="kb-manage-rebuild-btn">${esc(T("updateCorpusRebuild"))}</button></p>
+        </div>`
+      : "";
+  const webhookManageSection =
+    isOwner && !legacy && isWebhook
+      ? `<div class="kb-detail-block">
+          <h2 class="kb-detail-block-title">${esc(T("kbUpdateCorpusTitle"))}</h2>
+          <p class="muted small">${esc(T("webhookProviderLabel"))}: ${esc(String(meta?.webhook_provider || "").toLowerCase() === "github" ? T("webhookProviderGithub") : T("webhookProviderGitlab"))}</p>
+          <label><span>${esc(T("webhookUrlLabel"))}</span><input id="kb-manage-webhook-url" readonly value="${esc(String(meta?.webhook_url || ""))}" /></label>
+          <label><span>${esc(T("webhookSecretLabel"))}</span><input id="kb-manage-webhook-secret" readonly value="${esc(String(meta?.webhook_secret_masked || ""))}" placeholder="${esc(String(meta?.webhook_provider || "").toLowerCase() === "github" ? T("webhookSecretPlaceholderGithub") : T("webhookSecretPlaceholderGitlab"))}" /></label>
+          <p class="form-actions" style="margin-top:0.75rem">
+            <button type="button" class="secondary" id="kb-manage-webhook-eye-btn">${esc(T("apiKeyEyeShow"))}</button>
+            <button type="button" id="kb-manage-webhook-regen-btn">${esc(T("webhookSecretRegenerate"))}</button>
+          </p>
+          <label><span>${esc(T("webhookRepoUrlLabel"))}</span><input id="kb-manage-webhook-repo-url" value="${esc(String(meta?.webhook_repo_url || ""))}" placeholder="${esc(T("webhookRepoUrlPlaceholder"))}" /></label>
+          <label><span>${esc(T("webhookBranchLabel"))}</span><input id="kb-manage-webhook-ref" value="${esc(String(meta?.webhook_ref || ""))}" placeholder="${esc(T("webhookBranchPlaceholder"))}" autocomplete="off" /></label>
+          <p class="muted small" style="margin-top:0.5rem">${esc(T("webhookManualPullHint"))}</p>
+          <p class="form-actions" style="margin-top:0.75rem">
+            <button type="button" class="secondary" id="kb-manage-webhook-save-repo-btn">${esc(T("webhookSaveRepo"))}</button>
+            <button type="button" id="kb-manage-webhook-pull-btn">${esc(T("webhookManualPull"))}</button>
+          </p>
         </div>`
       : "";
 
@@ -2060,6 +2462,7 @@ async function renderKbManage(user, name) {
                 ${readmeSection}
                 ${membersSection ? `<hr class="hr-soft hr-soft--kb-detail" />${membersSection}` : ""}
                 ${corpusUpdateSection ? `<hr class="hr-soft hr-soft--kb-detail" />${corpusUpdateSection}` : ""}
+                ${webhookManageSection ? `<hr class="hr-soft hr-soft--kb-detail" />${webhookManageSection}` : ""}
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block">
                   <h2 class="kb-detail-block-title">${esc(T("search"))}</h2>
@@ -2147,6 +2550,88 @@ async function renderKbManage(user, name) {
         setStatus(err.message, true);
       } finally {
         btn.disabled = false;
+      }
+    });
+  }
+  if (webhookManageSection) {
+    let webhookManageSecretRaw = "";
+    let webhookManageSecretVisible = false;
+    const secretInput = document.getElementById("kb-manage-webhook-secret");
+    const eyeBtn = document.getElementById("kb-manage-webhook-eye-btn");
+    const refreshSecret = () => {
+      if (!secretInput) return;
+      secretInput.value = webhookManageSecretVisible
+        ? webhookManageSecretRaw
+        : "*".repeat(String(webhookManageSecretRaw || "").length || Number(meta?.webhook_secret_len || 0));
+      if (eyeBtn) eyeBtn.textContent = webhookManageSecretVisible ? T("apiKeyEyeHide") : T("apiKeyEyeShow");
+    };
+    eyeBtn?.addEventListener("click", async () => {
+      if (!webhookManageSecretRaw) {
+        try {
+          const d = await fetchJSON(`/api/kb/${encodeURIComponent(name)}/webhook-secret`);
+          webhookManageSecretRaw = String(d?.secret || "");
+        } catch (e) {
+          setStatus(e.message, true);
+          return;
+        }
+      }
+      webhookManageSecretVisible = !webhookManageSecretVisible;
+      refreshSecret();
+    });
+    document.getElementById("kb-manage-webhook-regen-btn")?.addEventListener("click", async () => {
+      try {
+        await fetchJSON(`/api/kb/${encodeURIComponent(name)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ regenerate_webhook_secret: true }),
+        });
+        webhookManageSecretRaw = "";
+        webhookManageSecretVisible = false;
+        setStatus(T("saveDone"));
+        await render();
+      } catch (e) {
+        setStatus(e.message, true);
+      }
+    });
+    document.getElementById("kb-manage-webhook-save-repo-btn")?.addEventListener("click", async () => {
+      const repo_url = String(document.getElementById("kb-manage-webhook-repo-url")?.value || "").trim();
+      const ref = String(document.getElementById("kb-manage-webhook-ref")?.value || "").trim();
+      const btn = document.getElementById("kb-manage-webhook-save-repo-btn");
+      if (btn) btn.disabled = true;
+      try {
+        if (!ref) {
+          setStatus(T("requireWebhookBranch"), true);
+          return;
+        }
+        await fetchJSON(`/api/kb/${encodeURIComponent(name)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ repo_url, ref }),
+        });
+        setStatus(T("saveDone"));
+        await render();
+      } catch (e) {
+        setStatus(e.message, true);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+    document.getElementById("kb-manage-webhook-pull-btn")?.addEventListener("click", async () => {
+      const btn = document.getElementById("kb-manage-webhook-pull-btn");
+      if (btn) btn.disabled = true;
+      try {
+        const start = await fetchJSON(`/api/kb/${encodeURIComponent(name)}/webhook-pull`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        setStatus(T("taskEnqueued"));
+        if (start?.job_id) go(`/tasks/${encodeURIComponent(start.job_id)}`);
+        else await render();
+      } catch (e) {
+        setStatus(e.message, true);
+      } finally {
+        if (btn) btn.disabled = false;
       }
     });
   }
@@ -2244,6 +2729,9 @@ async function renderKbManage(user, name) {
     saveNameBtn.addEventListener("click", async () => {
       const newName = document.getElementById("kb-name-edit").value.trim();
       if (!newName) return;
+      if (newName !== name && isWebhook) {
+        if (!(await showConfirmDialog(T("renameKbWebhookWarning")))) return;
+      }
       try {
         const res = await fetchJSON(`/api/kb/${encodeURIComponent(name)}`, {
           method: "PATCH",
@@ -2430,7 +2918,7 @@ async function renderTaskDetail(user, jobId) {
     if (jPeek?.kb_name) headTitle = String(jPeek.kb_name);
   } catch (e) {
     if (isJobGoneError(e)) {
-      setStatus(T("taskNotFoundOrDone"));
+      setStatus(T("taskNotFoundOrDone"), true);
       go("/tasks");
       return;
     }
@@ -2564,11 +3052,20 @@ async function renderTaskDetail(user, jobId) {
     try {
       const ended = await pollJobUntilTerminal(jobId, refresh);
       if (ended._jobRemoved) {
+        const n = String(lastKbName || ended.result?.name || "").trim();
+        let kbExists = false;
+        if (n) {
+          try {
+            const kb = await fetchJSON(`/api/kb/${encodeURIComponent(n)}`);
+            kbExists = !!kb?.ok;
+          } catch {
+            kbExists = false;
+          }
+        }
         if (!buildDoneToastShown) {
           buildDoneToastShown = true;
-          const n = lastKbName || ended.result?.name || "";
-          if (n) setStatus(T("buildDone", n));
-          else setStatus(T("taskJobRemovedAfterDone"));
+          if (kbExists && n) setStatus(T("buildDone", n));
+          else setStatus(T("taskNotFoundOrDone"), true);
         }
         go("/tasks");
         return;
@@ -2579,7 +3076,7 @@ async function renderTaskDetail(user, jobId) {
       }
     } catch (e) {
       if (isJobGoneError(e)) {
-        setStatus(T("taskNotFoundOrDone"));
+        setStatus(T("taskNotFoundOrDone"), true);
         go("/tasks");
         return;
       }
@@ -2587,7 +3084,7 @@ async function renderTaskDetail(user, jobId) {
     }
   } catch (e) {
     if (isJobGoneError(e)) {
-      setStatus(T("taskNotFoundOrDone"));
+      setStatus(T("taskNotFoundOrDone"), true);
       go("/tasks");
       return;
     }
@@ -2598,6 +3095,60 @@ async function renderTaskDetail(user, jobId) {
     }
     if (cancelBtn) cancelBtn.style.display = "none";
   }
+}
+
+async function renderSkillPage(user) {
+  let content = "";
+  try {
+    const d = await fetchJSON("/api/skill-md");
+    content = String(d?.content || "");
+  } catch (e) {
+    setStatus(e.message, true);
+  }
+  appEl.innerHTML = `
+    <div class="app-shell">
+      ${renderShellSidebar("skill")}
+      <div class="shell-main">
+        <div class="shell-content">
+          ${renderTopbar(user, { title: T("skillTitle"), subtitle: T("skillSubtitle") })}
+          <div class="shell-body profile-panel kb-detail-shell page-frame page-frame--wide">
+            <div class="page-frame__inner">
+              <div class="kb-detail-flow">
+                <div class="kb-detail-block kb-detail-actions">
+                  <button type="button" id="skill-download-btn">${esc(T("skillDownload"))}</button>
+                </div>
+                <hr class="hr-soft hr-soft--kb-detail" />
+                <div class="kb-detail-block">
+                  <div class="md-preview">${content ? markdownToHtml(content) : ""}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  bindShellChrome(user);
+  void refreshTopbarAvatar(user);
+  document.getElementById("skill-download-btn")?.addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/skill-md/download", { headers: { ...authHeaders() } });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const u = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = u;
+      a.download = "bcecli.zip";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(u);
+    } catch (e) {
+      setStatus(e.message, true);
+    }
+  });
 }
 
 async function render() {
@@ -2670,6 +3221,11 @@ async function render() {
     return;
   }
 
+  if (route.type === "skill") {
+    await renderSkillPage(user);
+    return;
+  }
+
   if (route.type === "profile") {
     await renderProfile(user);
     return;
@@ -2689,11 +3245,23 @@ if (restored?.lang === "zh" || restored?.lang === "en") {
     /* ignore */
   }
 }
+if (restored?.theme === "light" || restored?.theme === "dark") {
+  currentTheme = restored.theme;
+} else {
+  try {
+    const ut = localStorage.getItem(UI_THEME_KEY);
+    if (ut === "light" || ut === "dark") currentTheme = ut;
+  } catch {
+    /* ignore */
+  }
+}
 try {
   localStorage.setItem(UI_LANG_KEY, currentLang);
+  localStorage.setItem(UI_THEME_KEY, currentTheme);
 } catch {
   /* ignore */
 }
+applyTheme();
 if (restored?.stagedUploadId) stagedUploadId = restored.stagedUploadId;
 
 render().catch((e) => setStatus(e.message, true));
