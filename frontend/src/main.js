@@ -11,7 +11,7 @@ const DEFAULT_AVATAR_URL = "/default-avatar.svg";
 const DEFAULT_KB_ICON_URL = "/default-kb.svg";
 
 let currentLang = "en";
-let currentTheme = "dark";
+let currentTheme = "light";
 let stagedUploadId = null;
 /** Manage-page corpus update: staged tar (not persisted across reload). */
 let manageCorpusUploadId = null;
