@@ -13,3 +13,6 @@ sentencepiece>=0.1.99
 protobuf>=3.20
 pypdf
 dulwich
+python-docx
+openpyxl
+beautifulsoup4

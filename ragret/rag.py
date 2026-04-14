@@ -22,7 +22,6 @@ try:
 except ImportError:
     pass
 
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -32,6 +31,7 @@ except ImportError:
     from langchain_community.embeddings import HuggingFaceEmbeddings
 
 from ragret.paths import default_hf_models_dir, resolve_hf_snapshot_dir
+from ragret.parsers import ParserRegistry, default_parsers
 from ragret.rerank import RagretBCERerank
 
 EMBEDDING_MODEL = "maidalun1020/bce-embedding-base_v1"
@@ -50,6 +50,7 @@ _search_rerank_infer_lock = threading.Lock()
 _search_index_cache: OrderedDict[
     str, tuple[int, int, np.ndarray, list[dict[str, Any]], str | None]
 ] = OrderedDict()
+_PARSER_REGISTRY = ParserRegistry(default_parsers())
 
 
 def _ensure_hf_cache_env() -> None:
@@ -110,25 +111,19 @@ def _reraise_if_missing_hf_weights(exc: BaseException) -> None:
 
 
 def load_one_file(path: Path) -> list[Document]:
-    suf = path.suffix.lower()
-    if suf == ".pdf":
-        return PyPDFLoader(str(path)).load()
-    if suf in (".txt", ".md", ".markdown"):
-        return TextLoader(str(path), encoding="utf-8").load()
-    raise ValueError(f"Unsupported file type: {path.suffix}. Use .pdf, .txt, or .md.")
+    return _PARSER_REGISTRY.parse_file(path)
 
 
 def _iter_indexable_files(work_dir: Path) -> list[Path]:
-    """Sorted list of .pdf / .txt / .md files under work_dir (recursive)."""
+    """Sorted list of supported files under work_dir (recursive)."""
     if not work_dir.exists():
         raise FileNotFoundError(work_dir)
     if work_dir.is_file():
         return [work_dir.resolve()]
     out: list[Path] = []
-    for glob_pat in ("**/*.pdf", "**/*.txt", "**/*.md"):
-        for f in sorted(work_dir.glob(glob_pat)):
-            if f.is_file():
-                out.append(f.resolve())
+    for f in sorted(work_dir.rglob("*")):
+        if f.is_file() and _PARSER_REGISTRY.supports(f):
+            out.append(f.resolve())
     return out
 
 
@@ -172,13 +167,12 @@ def load_documents_from_dir(work_dir: Path) -> list[Document]:
         return load_one_file(work_dir)
     documents: list[Document] = []
     for f in _iter_indexable_files(work_dir):
-        suf = f.suffix.lower()
-        if suf == ".pdf":
-            documents.extend(PyPDFLoader(str(f)).load())
-        else:
-            documents.extend(TextLoader(str(f), encoding="utf-8").load())
+        documents.extend(load_one_file(f))
     if not documents:
-        raise ValueError(f"No .pdf / .txt / .md files under: {work_dir}")
+        raise ValueError(
+            f"No supported files under: {work_dir}. "
+            f"Supported: {', '.join(_PARSER_REGISTRY.supported_suffixes)}"
+        )
     return documents
 
 

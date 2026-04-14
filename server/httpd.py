@@ -12,10 +12,12 @@ import re
 import secrets
 import shutil
 import socket
+import sqlite3
 import sys
 import tarfile
 import threading
 import time
+import traceback
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -205,6 +207,20 @@ def _send_text(handler: BaseHTTPRequestHandler, code: int, text: str) -> None:
     handler.wfile.write(body)
 
 
+def _send_internal_error(handler: BaseHTTPRequestHandler, where: str, exc: BaseException) -> None:
+    """Log full details to server console and return a JSON 500."""
+    sys.stderr.write(f"ragret-http-error: {where}\n  error={type(exc).__name__}: {exc}\n")
+    traceback.print_exc(file=sys.stderr)
+    _send_json(
+        handler,
+        500,
+        {
+            "ok": False,
+            "error": f"Internal error at {where}: {type(exc).__name__}: {exc}",
+        },
+    )
+
+
 def _send_bytes(
     handler: BaseHTTPRequestHandler,
     code: int,
@@ -346,10 +362,20 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                         prov = p
             return f"{proto}://{host}/api/webhooks/{prov}/{kb_name}"
 
+        def _folder_push_url_for_kb(self, kb_name: str, secret_token: str) -> str:
+            proto, host = self._webhook_proto_host()
+            return f"{proto}://{host}/api/push/{kb_name}"
+
         def _webhook_base_urls(self) -> dict[str, str]:
             proto, host = self._webhook_proto_host()
             base = f"{proto}://{host}/api/webhooks"
             return {"gitlab": f"{base}/gitlab/", "github": f"{base}/github/"}
+
+        def _push_token_or_empty(self) -> str:
+            token = str(self.headers.get("X-Webhook-Token") or "").strip()
+            if token:
+                return token
+            return str(self.headers.get("X-Gitlab-Token") or "").strip()
 
         def _complete_webhook_push(
             self, safe_name: str, rec: KBRecord, repo_url: str, checkout_sha: str
@@ -620,6 +646,13 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 return
 
             if parts[0].lower() == "api":
+                if (
+                    len(parts) == 4
+                    and parts[1].lower() == "push"
+                    and parts[3].lower() == "fingerprints"
+                ):
+                    self._handle_push_fingerprints(parts[2])
+                    return
                 if not self._api_open_path(parts[1:]) and not self._require_actor():
                     return
                 self._handle_api_get(parts[1:], qs)
@@ -645,6 +678,8 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
         def _api_open_path(self, parts: list[str]) -> bool:
             if len(parts) >= 2 and parts[0].lower() == "auth":
                 return parts[1].lower() in ("register", "login")
+            if len(parts) >= 2 and parts[0].lower() == "push":
+                return True
             return False
 
         def _handle_api_get(self, parts: list[str], qs: dict[str, list[str]]) -> None:
@@ -743,6 +778,8 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                             "github_pat": "GET/POST /api/user/github-pat",
                             "search": "GET /api/search/{index}?query=...",
                             "upload": "POST /api/upload",
+                            "push_upload": "POST /api/push/{kb_name} (multipart file + X-Webhook-Token)",
+                            "push_fingerprints": "GET /api/push/{kb_name}/fingerprints (X-Webhook-Token)",
                             "build": "POST /api/indexes/build",
                             "jobs": "GET /api/jobs | GET /api/jobs/{job_id} | POST /api/jobs/{job_id}/cancel",
                             "delete_index": "DELETE /api/indexes/{name}",
@@ -881,6 +918,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 body["legacy_registry_only"] = False
                 body["webhook_url"] = self._webhook_url_for_kb(name)
                 body["webhook_secret_masked"] = "*" * int(body.get("webhook_secret_len") or 0)
+                body["folder_push_url"] = self._folder_push_url_for_kb(name, str(rec.webhook_secret or ""))
                 if k != "superuser":
                     body["permission"] = {
                         "can_read": perm.can_read,
@@ -1080,6 +1118,10 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     self._handle_gitlab_webhook(wk_kb)
                 else:
                     self._handle_github_webhook(wk_kb)
+                return
+
+            if len(parts) == 3 and parts[0].lower() == "api" and parts[1].lower() == "push":
+                self._handle_secret_folder_push(parts[2], parse_qs(parsed.query))
                 return
 
             if not self._require_actor():
@@ -1847,6 +1889,175 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 shutil.copyfileobj(item.file, out)
             _send_json(self, 200, {"ok": True, "upload_id": upload_id})
 
+        def _stage_tar_from_multipart(self) -> str:
+            ctype = self.headers.get("Content-Type", "")
+            if "multipart/form-data" not in ctype:
+                raise ValueError("Content-Type must be multipart/form-data")
+            try:
+                form = cgi.FieldStorage(
+                    fp=self.rfile,
+                    headers=self.headers,
+                    environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": ctype},
+                )
+            except Exception as e:
+                raise ValueError(f"Invalid multipart payload: {e}") from e
+            item = form["file"] if "file" in form else None
+            if isinstance(item, list):
+                item = item[0] if item else None
+            if item is None:
+                raise ValueError("Missing form field: file")
+            archive_name = Path(getattr(item, "filename", "") or "").name
+            if not archive_name:
+                raise ValueError("Missing archive filename")
+            if not _is_tar_filename(archive_name):
+                raise ValueError("Expected a tar archive (.tar, .tar.gz, .tgz, …)")
+
+            upload_id = secrets.token_hex(12)
+            upload_base.mkdir(parents=True, exist_ok=True)
+            staging = (upload_base / "staging" / upload_id).resolve()
+            try:
+                staging.relative_to(upload_base.resolve())
+            except ValueError as e:
+                raise ValueError("Invalid staging path") from e
+            staging.mkdir(parents=True, exist_ok=True)
+            (staging / "meta.json").write_text(
+                json.dumps({"original_name": archive_name}, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            with (staging / "blob").open("wb") as out:
+                shutil.copyfileobj(item.file, out)
+            return upload_id
+
+        def _handle_secret_folder_push(self, kb_name: str, qs: dict[str, list[str]]) -> None:
+            try:
+                token = self._push_token_or_empty()
+                if not token:
+                    _send_json(self, 401, {"ok": False, "error": "Missing token"})
+                    return
+                try:
+                    key = safe_index_name(kb_name)
+                except ValueError as e:
+                    _send_json(self, 400, {"ok": False, "error": str(e)})
+                    return
+                rec = app_store.get_kb_record_any_state(key)
+                if rec is None:
+                    _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
+                    return
+                expected = str(rec.webhook_secret or "").strip()
+                if not expected:
+                    _send_json(self, 403, {"ok": False, "error": "Push token is not configured for this knowledge base"})
+                    return
+                if not secrets.compare_digest(expected, token):
+                    _send_json(self, 403, {"ok": False, "error": "Invalid push token"})
+                    return
+                if app_store.resolve_kb_db_path(key) is None:
+                    _send_json(self, 409, {"ok": False, "error": "Knowledge base is not ready yet"})
+                    return
+                try:
+                    upload_id = self._stage_tar_from_multipart()
+                except ValueError as e:
+                    _send_json(self, 400, {"ok": False, "error": str(e)})
+                    return
+
+                n_active = app_store.count_user_upload_tasks_active(int(rec.owner_id))
+                if n_active >= _MAX_USER_UPLOAD_JOBS:
+                    cleanup_upload_staging(upload_base, upload_id)
+                    _send_json(
+                        self,
+                        429,
+                        {
+                            "ok": False,
+                            "error": "Too many upload build jobs in queue or running (max 3).",
+                        },
+                    )
+                    return
+                job_id = secrets.token_hex(12)
+                payload = {
+                    "description": str(rec.description or ""),
+                    "readme_md": str(rec.readme_md or ""),
+                    "is_public": bool(rec.is_public),
+                    "icon": str(rec.icon or "book"),
+                }
+                app_store.enqueue_build_job(
+                    job_id=job_id,
+                    user_id=int(rec.owner_id),
+                    task_kind="upload",
+                    op="update",
+                    kb_name=key,
+                    upload_id=upload_id,
+                    payload=payload,
+                )
+                wake_build_worker()
+                _send_json(self, 202, {"ok": True, "job_id": job_id})
+            except Exception as e:
+                _send_internal_error(self, "POST /api/push/<kb>", e)
+
+        def _handle_push_fingerprints(self, kb_name: str) -> None:
+            try:
+                token = self._push_token_or_empty()
+                if not token:
+                    _send_json(self, 401, {"ok": False, "error": "Missing token"})
+                    return
+                try:
+                    key = safe_index_name(kb_name)
+                except ValueError as e:
+                    _send_json(self, 400, {"ok": False, "error": str(e)})
+                    return
+                rec = app_store.get_kb_record_any_state(key)
+                if rec is None:
+                    _send_json(self, 404, {"ok": False, "error": "Unknown knowledge base"})
+                    return
+                expected = str(rec.webhook_secret or "").strip()
+                if not expected:
+                    _send_json(self, 403, {"ok": False, "error": "Push token is not configured for this knowledge base"})
+                    return
+                if not secrets.compare_digest(expected, token):
+                    _send_json(self, 403, {"ok": False, "error": "Invalid push token"})
+                    return
+                db_path_s = app_store.resolve_kb_db_path(key)
+                if not db_path_s:
+                    _send_json(self, 409, {"ok": False, "error": "Knowledge base is not ready yet"})
+                    return
+                db_path = Path(db_path_s).resolve()
+                if not db_path.is_file():
+                    _send_json(self, 404, {"ok": False, "error": "Knowledge base index file is missing"})
+                    return
+
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+                try:
+                    row = conn.execute("SELECT value FROM meta WHERE key='source_fingerprints'").fetchone()
+                    row_ts = conn.execute("SELECT value FROM meta WHERE key='indexed_at'").fetchone()
+                finally:
+                    conn.close()
+                raw = str(row[0] or "") if row else ""
+                fp_map: dict[str, str] = {}
+                if raw:
+                    try:
+                        obj = json.loads(raw)
+                        if isinstance(obj, dict):
+                            fp_map = {str(k): str(v) for k, v in obj.items()}
+                    except json.JSONDecodeError:
+                        fp_map = {}
+                indexed_at: int | None = None
+                if row_ts and row_ts[0] is not None:
+                    try:
+                        indexed_at = int(str(row_ts[0]))
+                    except ValueError:
+                        indexed_at = None
+                _send_json(
+                    self,
+                    200,
+                    {
+                        "ok": True,
+                        "kb_name": key,
+                        "indexed_at": indexed_at,
+                        "count": len(fp_map),
+                        "fingerprints": fp_map,
+                    },
+                )
+            except Exception as e:
+                _send_internal_error(self, "GET /api/push/<kb>/fingerprints", e)
+
         def _handle_start_build_job(self, *, owner_user_id: int) -> None:
             data = self._read_json_body()
             if data is None:
@@ -1864,20 +2075,22 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
             if not name_raw or not desc_raw:
                 _send_json(self, 400, {"ok": False, "error": "JSON must include non-empty name and description"})
                 return
-            if source_type not in ("tar", "webhook"):
-                _send_json(self, 400, {"ok": False, "error": "source_type must be tar or webhook"})
+            if source_type not in ("tar", "webhook", "push"):
+                _send_json(self, 400, {"ok": False, "error": "source_type must be tar, webhook, or push"})
                 return
-            if source_type == "tar" and not upload_id:
+            if source_type in ("tar", "push") and not upload_id:
                 _send_json(
                     self,
                     400,
-                    {"ok": False, "error": "JSON must include non-empty upload_id for tar build"},
+                    {"ok": False, "error": "JSON must include non-empty upload_id for tar/push build"},
                 )
                 return
             if source_type == "webhook" and webhook_provider not in ("", "gitlab", "github"):
                 _send_json(self, 400, {"ok": False, "error": "webhook_provider must be gitlab or github"})
                 return
             if source_type == "webhook" and not webhook_secret:
+                webhook_secret = secrets.token_urlsafe(24)
+            if source_type in ("tar", "push") and not webhook_secret:
                 webhook_secret = secrets.token_urlsafe(24)
             if source_type == "webhook" and not webhook_repo_url:
                 _send_json(self, 400, {"ok": False, "error": "repo_url is required for webhook first build"})
@@ -1983,6 +2196,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                         "ok": True,
                         "job_id": job_id,
                         "webhook_url": self._webhook_url_for_kb(index_name),
+                        "folder_push_url": self._folder_push_url_for_kb(index_name, webhook_secret),
                     },
                 )
                 return
@@ -2000,6 +2214,8 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     )
                     return
                 op = "update"
+                if webhook_secret:
+                    app_store.update_knowledge_base_webhook_secret(index_name, webhook_secret)
             else:
                 if app_store.knowledge_base_name_taken(index_name):
                     _send_json(
@@ -2019,9 +2235,9 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                         owner_id=int(owner_user_id),
                         is_public=bool(data.get("is_public", False)),
                         icon=str(data.get("icon") or "book").strip() or "book",
-                        source_type="tar",
+                        source_type=source_type,
                         webhook_provider="",
-                        webhook_secret="",
+                        webhook_secret=webhook_secret,
                     )
                 except ValueError as e:
                     _send_json(self, 409, {"ok": False, "error": str(e)})
@@ -2085,7 +2301,15 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                 return
 
             wake_build_worker()
-            _send_json(self, 202, {"ok": True, "job_id": job_id})
+            _send_json(
+                self,
+                202,
+                {
+                    "ok": True,
+                    "job_id": job_id,
+                    "folder_push_url": self._folder_push_url_for_kb(index_name, webhook_secret),
+                },
+            )
 
         def _handle_delete_index(self, name: str, qs: dict[str, list[str]]) -> None:
             try:

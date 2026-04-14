@@ -149,7 +149,7 @@ const i18n = {
     newKb: "Add knowledge base",
     addKbSubtitle: "Upload a tar archive, then name and describe your index.",
     kbTypeLabel: "Knowledge base type",
-    kbTypeTar: "Compressed archive (.tar)",
+    kbTypeTar: "Local push",
     kbTypeWebhook: "Webhook (GitLab / GitHub)",
     indexName: "Name",
     indexDescription: "Description",
@@ -157,11 +157,15 @@ const i18n = {
     readmePreview: "Preview",
     readmeEdit: "Edit",
     archiveLabel: "Archive (.tar / .tar.gz / .tgz)",
+    pushArchiveLabel: "Local push settings",
     webhookAddKbSectionTitle: "Webhook & repository (HTTP clone URL, provider, secret)",
     webhookProviderLabel: "Webhook provider",
     webhookProviderGitlab: "GitLab",
     webhookProviderGithub: "GitHub",
     webhookUrlLabel: "Webhook URL",
+    folderPushUrlLabel: "Folder push URL",
+    folderPushHint: "Your client can upload a tar archive to this URL; the server queues an incremental rebuild.",
+    folderPushHeaderHint: "Send secret in header: X-Webhook-Token: <secret>",
     webhookSecretLabel: "Secret token",
     webhookRepoUrlLabel: "Repository URL (HTTP/HTTPS)",
     webhookBranchLabel: "Branch to build",
@@ -367,7 +371,7 @@ const i18n = {
     newKb: "添加知识库",
     addKbSubtitle: "上传 tar 归档，填写名称与描述后构建索引。",
     kbTypeLabel: "知识库类型",
-    kbTypeTar: "压缩文件（.tar）",
+    kbTypeTar: "本地推送",
     kbTypeWebhook: "Webhook（GitLab / GitHub）",
     indexName: "名称",
     indexDescription: "描述",
@@ -375,11 +379,15 @@ const i18n = {
     readmePreview: "预览",
     readmeEdit: "编辑",
     archiveLabel: "归档（.tar / .tar.gz / .tgz）",
+    pushArchiveLabel: "本地推送设置",
     webhookAddKbSectionTitle: "Webhook 与仓库（HTTP 克隆地址、平台、Secret）",
     webhookProviderLabel: "Webhook 平台",
     webhookProviderGitlab: "GitLab",
     webhookProviderGithub: "GitHub",
     webhookUrlLabel: "Webhook 链接",
+    folderPushUrlLabel: "文件夹推送 URL",
+    folderPushHint: "你的客户端可向此地址上传 tar 包，服务端会自动排队增量重建。",
+    folderPushHeaderHint: "请求头携带：X-Webhook-Token: <secret>",
     webhookSecretLabel: "Secret Token",
     webhookRepoUrlLabel: "仓库地址（HTTP/HTTPS）",
     webhookBranchLabel: "构建分支",
@@ -1157,6 +1165,7 @@ function bindUploadForm() {
   const tarBlock = document.getElementById("kb-source-tar-block");
   const webhookBlock = document.getElementById("kb-source-webhook-block");
   const uploadBlock = document.getElementById("kb-upload-progress-block");
+  const folderPushUrlInput = document.getElementById("kb-folder-push-url");
   const webhookUrlInput = document.getElementById("kb-webhook-url");
   const webhookSecretInput = document.getElementById("kb-webhook-secret");
   const webhookSecretEyeBtn = document.getElementById("kb-webhook-secret-eye");
@@ -1166,6 +1175,9 @@ function bindUploadForm() {
   const webhookProviderEl = document.getElementById("kb-webhook-provider");
   const nameInput = document.getElementById("kb-name");
   const sourceSectionTitleEl = document.getElementById("kb-source-section-title");
+  const pushSecretInput = document.getElementById("kb-push-secret");
+  const pushSecretEyeBtn = document.getElementById("kb-push-secret-eye");
+  const pushSecretRegenBtn = document.getElementById("kb-push-secret-regen");
   let webhookSecretRaw = "";
   let webhookSecretVisible = false;
   const webhookBases = {
@@ -1176,6 +1188,11 @@ function bindUploadForm() {
     if (!webhookSecretInput) return;
     webhookSecretInput.value = webhookSecretVisible ? webhookSecretRaw : "*".repeat(String(webhookSecretRaw || "").length);
     webhookSecretEyeBtn.textContent = webhookSecretVisible ? T("apiKeyEyeHide") : T("apiKeyEyeShow");
+    if (pushSecretInput) {
+      pushSecretInput.value = webhookSecretVisible ? webhookSecretRaw : "*".repeat(String(webhookSecretRaw || "").length);
+    }
+    if (pushSecretEyeBtn) pushSecretEyeBtn.textContent = webhookSecretVisible ? T("apiKeyEyeHide") : T("apiKeyEyeShow");
+    if (folderPushUrlInput) folderPushUrlInput.value = buildFolderPushUrl();
   };
   const generateWebhookSecret = async () => {
     const d = await fetchJSON("/api/user/webhook-secret/generate");
@@ -1206,8 +1223,14 @@ function bindUploadForm() {
     const base = webhookBaseUrl.endsWith("/") ? webhookBaseUrl : `${webhookBaseUrl}/`;
     return `${base}${seg}`;
   };
+  const buildFolderPushUrl = () => {
+    const kb = (nameInput?.value || "").trim();
+    const seg = kb ? encodeURIComponent(kb) : "<kb-name>";
+    return `${window.location.origin}/api/push/${seg}`;
+  };
   const refreshWebhookUrl = () => {
     if (webhookUrlInput) webhookUrlInput.value = buildWebhookUrl();
+    if (folderPushUrlInput) folderPushUrlInput.value = buildFolderPushUrl();
   };
   const applyWebhookProviderUi = () => {
     const prov = webhookProviderEl?.value === "github" ? "github" : "gitlab";
@@ -1224,10 +1247,13 @@ function bindUploadForm() {
     if (uploadBlock) uploadBlock.style.display = tp === "tar" ? "" : "none";
     if (webhookBlock) webhookBlock.style.display = tp === "webhook" ? "" : "none";
     if (sourceSectionTitleEl) {
-      sourceSectionTitleEl.textContent = tp === "webhook" ? T("webhookAddKbSectionTitle") : T("archiveLabel");
+      sourceSectionTitleEl.textContent = tp === "webhook" ? T("webhookAddKbSectionTitle") : T("pushArchiveLabel");
     }
     applyWebhookProviderUi();
     if (tp === "webhook" && !webhookSecretRaw) {
+      void generateWebhookSecret();
+    }
+    if (tp === "tar" && !webhookSecretRaw) {
       void generateWebhookSecret();
     }
   };
@@ -1241,7 +1267,18 @@ function bindUploadForm() {
     webhookSecretVisible = !webhookSecretVisible;
     refreshWebhookSecretInput();
   });
+  pushSecretEyeBtn?.addEventListener("click", () => {
+    webhookSecretVisible = !webhookSecretVisible;
+    refreshWebhookSecretInput();
+  });
   webhookSecretRegenBtn?.addEventListener("click", async () => {
+    try {
+      await generateWebhookSecret();
+    } catch (e) {
+      setStatus(e.message, true);
+    }
+  });
+  pushSecretRegenBtn?.addEventListener("click", async () => {
     try {
       await generateWebhookSecret();
     } catch (e) {
@@ -1294,7 +1331,7 @@ function bindUploadForm() {
           source_type: sourceType,
           webhook_provider:
             sourceType === "webhook" ? (webhookProviderEl?.value === "github" ? "github" : "gitlab") : undefined,
-          webhook_secret: sourceType === "webhook" ? webhookSecretRaw : undefined,
+          webhook_secret: webhookSecretRaw || undefined,
           repo_url: sourceType === "webhook" ? String(webhookRepoUrlInput?.value || "").trim() : undefined,
           ref: sourceType === "webhook" ? String(webhookRefInput?.value || "").trim() : undefined,
           is_public,
@@ -1631,6 +1668,13 @@ async function renderAddKb(user) {
                       <button type="button" class="secondary" id="kb-webhook-secret-regen">${esc(T("webhookSecretRegenerate"))}</button>
                     </p>
                   </div>
+                  <label><span>${esc(T("folderPushUrlLabel"))}</span><input id="kb-folder-push-url" readonly /></label>
+                  <label><span>${esc(T("webhookSecretLabel"))}</span><input id="kb-push-secret" readonly /></label>
+                  <p class="form-actions" style="margin-top:0.5rem">
+                    <button type="button" class="secondary" id="kb-push-secret-eye">${esc(T("apiKeyEyeShow"))}</button>
+                    <button type="button" class="secondary" id="kb-push-secret-regen">${esc(T("webhookSecretRegenerate"))}</button>
+                  </p>
+                  <p class="muted small">${esc(T("folderPushHint"))}<br />${esc(T("folderPushHeaderHint"))}</p>
                 </div>
                 <hr class="hr-soft hr-soft--kb-detail" />
                 <div class="kb-detail-block" id="kb-upload-progress-block">
@@ -2423,6 +2467,13 @@ async function renderKbManage(user, name) {
     isOwner && !legacy && !isWebhook
       ? `<div class="kb-detail-block">
           <h2 class="kb-detail-block-title">${esc(T("kbUpdateCorpusTitle"))}</h2>
+          <label><span>${esc(T("folderPushUrlLabel"))}</span><input id="kb-manage-folder-push-url" readonly value="${esc(String(meta?.folder_push_url || ""))}" /></label>
+          <label><span>${esc(T("webhookSecretLabel"))}</span><input id="kb-manage-push-secret" readonly value="${esc(String(meta?.webhook_secret_masked || ""))}" /></label>
+          <p class="form-actions" style="margin-top:0.75rem">
+            <button type="button" class="secondary" id="kb-manage-push-secret-eye-btn">${esc(T("apiKeyEyeShow"))}</button>
+            <button type="button" id="kb-manage-push-secret-regen-btn">${esc(T("webhookSecretRegenerate"))}</button>
+          </p>
+          <p class="muted small">${esc(T("folderPushHint"))}<br />${esc(T("folderPushHeaderHint"))}</p>
           <div class="archive-row manage-archive-row">
             <input type="file" id="kb-manage-archive" class="hidden-file-input" accept=".tar,.tgz,.tar.gz,.tar.bz2,.tar.xz,application/x-tar" />
             <button type="button" class="secondary" id="kb-manage-pick-archive">${esc(T("chooseFile"))}</button>
@@ -2440,6 +2491,8 @@ async function renderKbManage(user, name) {
       ? `<div class="kb-detail-block">
           <h2 class="kb-detail-block-title">${esc(T("kbUpdateCorpusTitle"))}</h2>
           <p class="muted small">${esc(T("webhookProviderLabel"))}: ${esc(String(meta?.webhook_provider || "").toLowerCase() === "github" ? T("webhookProviderGithub") : T("webhookProviderGitlab"))}</p>
+          <label><span>${esc(T("folderPushUrlLabel"))}</span><input id="kb-manage-folder-push-url" readonly value="${esc(String(meta?.folder_push_url || ""))}" /></label>
+          <p class="muted small">${esc(T("folderPushHint"))}</p>
           <label><span>${esc(T("webhookUrlLabel"))}</span><input id="kb-manage-webhook-url" readonly value="${esc(String(meta?.webhook_url || ""))}" /></label>
           <label><span>${esc(T("webhookSecretLabel"))}</span><input id="kb-manage-webhook-secret" readonly value="${esc(String(meta?.webhook_secret_masked || ""))}" placeholder="${esc(String(meta?.webhook_provider || "").toLowerCase() === "github" ? T("webhookSecretPlaceholderGithub") : T("webhookSecretPlaceholderGitlab"))}" /></label>
           <p class="form-actions" style="margin-top:0.75rem">
@@ -2499,6 +2552,43 @@ async function renderKbManage(user, name) {
   void ensureKbIconOnImg(document.getElementById("kb-icon-edit-preview"), name);
 
   if (corpusUpdateSection) {
+    let pushSecretRaw = "";
+    let pushSecretVisible = false;
+    const pushSecretInput = document.getElementById("kb-manage-push-secret");
+    const pushSecretEyeBtn = document.getElementById("kb-manage-push-secret-eye-btn");
+    const refreshPushSecret = () => {
+      if (!pushSecretInput) return;
+      pushSecretInput.value = pushSecretVisible
+        ? pushSecretRaw
+        : "*".repeat(String(pushSecretRaw || "").length || Number(meta?.webhook_secret_len || 0));
+      if (pushSecretEyeBtn) pushSecretEyeBtn.textContent = pushSecretVisible ? T("apiKeyEyeHide") : T("apiKeyEyeShow");
+    };
+    pushSecretEyeBtn?.addEventListener("click", async () => {
+      if (!pushSecretRaw) {
+        try {
+          const d = await fetchJSON(`/api/kb/${encodeURIComponent(name)}/webhook-secret`);
+          pushSecretRaw = String(d?.secret || "");
+        } catch (e) {
+          setStatus(e.message, true);
+          return;
+        }
+      }
+      pushSecretVisible = !pushSecretVisible;
+      refreshPushSecret();
+    });
+    document.getElementById("kb-manage-push-secret-regen-btn")?.addEventListener("click", async () => {
+      try {
+        await fetchJSON(`/api/kb/${encodeURIComponent(name)}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ regenerate_webhook_secret: true }),
+        });
+        setStatus(T("saveDone"));
+        await render();
+      } catch (e) {
+        setStatus(e.message, true);
+      }
+    });
     const pickedEl = document.getElementById("kb-manage-picked-file-name");
     if (manageCorpusUploadId && manageCorpusKbFor === name) {
       if (pickedEl) pickedEl.textContent = T("kbManageCorpusStaged");
