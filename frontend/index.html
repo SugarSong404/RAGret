@@ -5,10 +5,59 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RAGret Panel</title>
     <script>
-      try {
-        var _t = localStorage.getItem("ragret.ui.theme");
-        if (_t === "light") document.documentElement.setAttribute("data-theme", "light");
-      } catch (_) {}
+      (function () {
+        try {
+          var _t = localStorage.getItem("ragret.ui.theme");
+          if (_t === "dark") document.documentElement.removeAttribute("data-theme");
+          else document.documentElement.setAttribute("data-theme", "light");
+        } catch (_) {
+          document.documentElement.setAttribute("data-theme", "light");
+        }
+      })();
+      (function () {
+        function stripYamlComment(s) {
+          return String(s || "")
+            .replace(/\s*#.*$/, "")
+            .trim();
+        }
+        function unquote(s) {
+          s = stripYamlComment(s);
+          if (
+            (s.charAt(0) === '"' && s.charAt(s.length - 1) === '"') ||
+            (s.charAt(0) === "'" && s.charAt(s.length - 1) === "'")
+          ) {
+            return s.slice(1, -1);
+          }
+          return s;
+        }
+        try {
+          var xhr = new XMLHttpRequest();
+          xhr.open("GET", "/custom-config.yml", false);
+          xhr.send(null);
+          if (xhr.status < 200 || xhr.status >= 300) return;
+          var text = xhr.responseText || "";
+          var pt = text.match(/^\s*page_title:\s*(.+)$/m);
+          if (pt) {
+            var title = unquote(pt[1]);
+            if (title) document.title = title;
+          }
+          var fv = text.match(/^\s*favicon_url:\s*(.+)$/m) || text.match(/^\s*favicon:\s*(.+)$/m);
+          if (fv) {
+            var href = unquote(fv[1]);
+            if (href) {
+              var link = document.querySelector('link[rel="icon"]');
+              if (!link) {
+                link = document.createElement("link");
+                link.rel = "icon";
+                document.head.appendChild(link);
+              }
+              link.href = href;
+            }
+          }
+        } catch (_) {
+          /* keep static title / default favicon */
+        }
+      })();
     </script>
     <link rel="stylesheet" href="/src/style.css" />
   </head>
