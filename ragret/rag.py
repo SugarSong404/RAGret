@@ -6,6 +6,7 @@ import ragret.compat  # noqa: F401 — multiprocess patch before torch / langcha
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -41,6 +42,11 @@ EMBED_BATCH_SIZE = 8
 # HTTP search: reuse models + SQLite snapshot per path (see search_db).
 _SEARCH_INDEX_CACHE_MAX = int(os.environ.get("RAGRET_SEARCH_INDEX_CACHE_MAX", "64"))
 _SEARCH_RERANK_CACHE_TOP = max(8, int(os.environ.get("RAGRET_SEARCH_RERANK_CACHE_TOP", "256")))
+# Hybrid retrieval: dense cosine + SQLite FTS5 BM25, merged by reciprocal rank fusion (RRF).
+_RRF_K = max(1, int(os.environ.get("RAGRET_RRF_K", "60")))
+_RRF_DENSE_POOL = max(8, int(os.environ.get("RAGRET_RRF_DENSE_POOL", "48")))
+_RRF_BM25_POOL = max(8, int(os.environ.get("RAGRET_RRF_BM25_POOL", "48")))
+_RRF_FUSE_TOP = max(8, int(os.environ.get("RAGRET_RRF_FUSE_TOP", "32")))
 
 _search_runtime_lock = threading.RLock()
 _search_embed_models: dict[str, Any] = {}
@@ -202,11 +208,155 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         """
     )
     conn.commit()
+    _try_init_chunks_fts(conn)
 
 
 def _clear_chunks(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM chunks;")
     conn.commit()
+
+
+def _chunks_fts_ready(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks_fts' LIMIT 1",
+    ).fetchone()
+    return row is not None
+
+
+def _try_init_chunks_fts(conn: sqlite3.Connection) -> bool:
+    """Create FTS5 external-content index over ``chunks`` for BM25-style ranking (if SQLite supports FTS5)."""
+    if _chunks_fts_ready(conn):
+        return True
+    try:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE chunks_fts USING fts5(
+                content,
+                content='chunks',
+                content_rowid='id',
+                tokenize='unicode61 remove_diacritics 0'
+            );
+            """
+        )
+        conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild');")
+        conn.commit()
+        return True
+    except sqlite3.OperationalError as e:
+        print(f"Note: FTS5 BM25 index unavailable ({e}); using dense retrieval only.")
+        conn.rollback()
+        return False
+
+
+def _chunks_fts_rebuild(conn: sqlite3.Connection) -> None:
+    if not _chunks_fts_ready(conn):
+        return
+    try:
+        conn.execute("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild');")
+    except sqlite3.OperationalError:
+        pass
+
+
+def _fts5_match_query(query: str, *, max_terms: int = 16) -> str | None:
+    """Build an FTS5 MATCH string (OR of quoted terms). Returns None if there is nothing to match."""
+    terms = []
+    seen: set[str] = set()
+    for m in re.finditer(r"[\w\u0080-\U0010ffff]+", query, flags=re.UNICODE):
+        t = (m.group(0) or "").strip()
+        if len(t) < 1:
+            continue
+        key = t.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        terms.append(t)
+        if len(terms) >= max_terms:
+            break
+    if not terms:
+        return None
+    parts = []
+    for t in terms:
+        esc = t.replace('"', '""')
+        parts.append(f'"{esc}"')
+    return " OR ".join(parts)
+
+
+def _bm25_ranked_chunk_ids(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    limit: int,
+) -> list[int]:
+    mq = _fts5_match_query(query)
+    if not mq:
+        return []
+    try:
+        cur = conn.execute(
+            """
+            SELECT rowid
+            FROM chunks_fts
+            WHERE chunks_fts MATCH ?
+            ORDER BY bm25(chunks_fts) ASC
+            LIMIT ?
+            """,
+            (mq, int(limit)),
+        )
+        return [int(r[0]) for r in cur.fetchall()]
+    except sqlite3.OperationalError:
+        return []
+
+
+def reciprocal_rank_fusion(
+    ranked_id_lists: list[list[int]],
+    *,
+    k: int = _RRF_K,
+) -> list[tuple[int, float]]:
+    """RRF over ordered chunk-id lists (best rank first). Returns (chunk_id, rrf_score) sorted by score desc."""
+    scores: dict[int, float] = {}
+    for ids in ranked_id_lists:
+        if not ids:
+            continue
+        for rank, doc_id in enumerate(ids, start=1):
+            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank)
+    return sorted(scores.items(), key=lambda x: -x[1])
+
+
+def _dense_chunk_ids_for_rrf(
+    scores: np.ndarray,
+    records: list[dict[str, Any]],
+    *,
+    threshold: float,
+    cap: int,
+) -> list[int]:
+    """Ordered chunk ids for the dense arm: prefer cosine >= threshold, else fall back to top scores."""
+    order = np.argsort(-scores)
+    out: list[int] = []
+    seen: set[int] = set()
+    for j in order:
+        if len(out) >= cap:
+            break
+        s = float(scores[int(j)])
+        if s < threshold:
+            continue
+        rid = int(records[int(j)]["id"])
+        if rid not in seen:
+            seen.add(rid)
+            out.append(rid)
+    if not out:
+        for j in order[:cap]:
+            rid = int(records[int(j)]["id"])
+            if rid not in seen:
+                seen.add(rid)
+                out.append(rid)
+        return out
+    if len(out) < min(8, cap):
+        for j in order:
+            if len(out) >= cap:
+                break
+            rid = int(records[int(j)]["id"])
+            if rid not in seen:
+                seen.add(rid)
+                out.append(rid)
+    return out[:cap]
 
 
 def _set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
@@ -300,7 +450,15 @@ def _embed_documents_with_progress(
 def make_reranker(device: str, top_n: int) -> RagretBCERerank:
     dev = str(device)
     rerank_dev = "cpu" if dev.lower().startswith("xpu") else dev
-    use_fp16 = rerank_dev.startswith("cuda") and torch.cuda.is_available()
+    # CUDA: fp16 for speed. CPU (e.g. XPU embed + rerank on CPU): fp16 can reduce memory; opt-out via env.
+    fp16_on_cpu = (os.environ.get("RAGRET_RERANK_FP16_ON_CPU", "1") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+    use_fp16 = (rerank_dev.startswith("cuda") and torch.cuda.is_available()) or (
+        rerank_dev == "cpu" and fp16_on_cpu
+    )
     local = _local_snapshot_path_or_fail(RERANKER_MODEL, "BCE reranker")
     return RagretBCERerank(
         model=local,
@@ -446,6 +604,7 @@ def index_workdir(
                 if progress is not None:
                     pct = 85 + int(13 * (i + 1) / max(n_write, 1))
                     report("sqlite", min(99, pct), f"{i + 1}/{n_write}")
+        _chunks_fts_rebuild(conn)
         fp_map = _fingerprint_map(work_dir)
         _set_meta(conn, "source_fingerprints", json.dumps(fp_map, sort_keys=True, ensure_ascii=False))
         _set_meta(conn, "chunk_size", str(chunk_size))
@@ -583,6 +742,7 @@ def try_incremental_update_workdir(
         conn.commit()
 
         if not to_embed:
+            _chunks_fts_rebuild(conn)
             _set_meta(conn, "source_fingerprints", json.dumps(new_fp, sort_keys=True, ensure_ascii=False))
             _set_meta(conn, "indexed_work_dir", str(work_dir))
             _set_meta(conn, "indexed_at", str(int(time.time())))
@@ -640,6 +800,7 @@ def try_incremental_update_workdir(
                     pct = 85 + int(13 * (row_i + 1) / max(n_emb, 1))
                     report("sqlite", min(99, pct), f"{row_i + 1}/{n_emb}")
 
+        _chunks_fts_rebuild(conn)
         _set_meta(conn, "source_fingerprints", json.dumps(new_fp, sort_keys=True, ensure_ascii=False))
         _set_meta(conn, "indexed_work_dir", str(work_dir))
         _set_meta(conn, "indexed_at", str(int(time.time())))
@@ -786,20 +947,49 @@ def search_db(
         )
 
     scores = matrix @ q
-    order = np.argsort(-scores)
+    by_id = {int(r["id"]): r for r in records}
+    dense_scores_by_id = {int(records[j]["id"]): float(scores[j]) for j in range(len(records))}
+    dense_ids = _dense_chunk_ids_for_rrf(
+        scores,
+        records,
+        threshold=float(score_threshold),
+        cap=_RRF_DENSE_POOL,
+    )
+
+    bm25_ids: list[int] = []
+    fts5_indexed = False
+    conn_ro = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        fts5_indexed = _chunks_fts_ready(conn_ro)
+        if fts5_indexed:
+            bm25_ids = _bm25_ranked_chunk_ids(conn_ro, query, limit=_RRF_BM25_POOL)
+    finally:
+        conn_ro.close()
+
+    fused = reciprocal_rank_fusion([dense_ids, bm25_ids], k=_RRF_K)
+    fuse_take = min(_RRF_FUSE_TOP, max(k * 3, int(rerank_top_n) * 4), len(fused))
+    fused = fused[:fuse_take]
+
+    bm25_rank_by_id = {cid: rank for rank, cid in enumerate(bm25_ids, start=1)}
+    dense_rank_by_id = {cid: rank for rank, cid in enumerate(dense_ids, start=1)}
+
     candidates: list[Document] = []
-    for idx in order:
-        s = float(scores[idx])
-        if s < score_threshold:
+    for chunk_id, rrf_s in fused:
+        r = by_id.get(int(chunk_id))
+        if r is None:
             continue
-        r = records[int(idx)]
         meta = dict(r["metadata"])
         meta["source"] = meta.get("source") or r["source"]
         meta["chunk_index"] = r["chunk_index"]
-        meta["vector_score"] = s
+        meta["vector_score"] = float(dense_scores_by_id.get(int(chunk_id), 0.0))
+        meta["rrf_score"] = float(rrf_s)
+        dr = dense_rank_by_id.get(int(chunk_id))
+        br = bm25_rank_by_id.get(int(chunk_id))
+        if dr is not None:
+            meta["dense_rank"] = dr
+        if br is not None:
+            meta["bm25_rank"] = br
         candidates.append(Document(page_content=r["content"], metadata=meta))
-        if len(candidates) >= k:
-            break
 
     if not candidates:
         return (
@@ -822,9 +1012,26 @@ def search_db(
     except Exception as e:
         _reraise_if_missing_hf_weights(e)
 
+    if fts5_indexed and bm25_ids:
+        mode = "dense + BM25 → RRF"
+    elif fts5_indexed:
+        mode = "dense + RRF (FTS 已建但本查询 BM25 无命中；可能词都被分词去掉或库中无字面匹配)"
+    else:
+        mode = "仅稠密向量（无 chunks_fts；需重新全量/增量索引以启用 BM25）"
+
     lines = [
         f"Query: {query}",
-        f"From {len(records)} chunks: recalled {len(candidates)}, kept {len(ranked)} after rerank.",
+        (
+            f"From {len(records)} chunks: {mode}; "
+            f"dense_pool={len(dense_ids)} bm25_hits={len(bm25_ids)} "
+            f"rrf_k={_RRF_K} fused_into_rerank={len(candidates)}, kept_after_rerank={len(ranked)}."
+        ),
+        (
+            f"Retrieval_diag: fts5_table={fts5_indexed!s} "
+            f"bm25_nonempty={bool(bm25_ids)!s} "
+            "(若 bm25_nonempty=true 且某条有 bm25_rank=，则 BM25 参与 RRF；"
+            "rrf 为两路倒数排名之和，dense_rank / bm25_rank 为各路名次。)"
+        ),
         "",
         "--- Retrieved passages ---",
         "",
@@ -832,8 +1039,12 @@ def search_db(
     for i, d in enumerate(ranked, 1):
         rs = d.metadata.get("relevance_score", "")
         vs = d.metadata.get("vector_score", "")
+        rr = d.metadata.get("rrf_score", "")
+        dr = d.metadata.get("dense_rank", "")
+        br = d.metadata.get("bm25_rank", "")
         src = d.metadata.get("source", "")
-        lines.append(f"[{i}] rerank={rs}  vector={vs}")
+        rank_bits = f"dense#{dr or '-'} bm25#{br or '-'}"
+        lines.append(f"[{i}] rerank={rs}  rrf={rr}  vector={vs}  {rank_bits}")
         if src:
             lines.append(f"    source: {src}")
         lines.append(d.page_content.strip())

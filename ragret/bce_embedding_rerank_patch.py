@@ -1,6 +1,8 @@
 """BCEmbedding rerank tokenization compat for tokenizers without ``encode_plus`` (newer transformers)."""
 from __future__ import annotations
 
+import os
+import warnings
 from copy import deepcopy
 from typing import Any, Dict, List
 
@@ -47,7 +49,15 @@ def reranker_tokenize_preproc(
             chunk1["token_type_ids"].extend(token_type_ids)
         return chunk1
 
-    query_inputs = _encode_plus_compat(tokenizer, query, truncation=False, padding=False)
+    max_query_tokens = int(os.environ.get("RAGRET_RERANK_MAX_QUERY_TOKENS", "380"))
+    max_query_tokens = max(32, min(max_query_tokens, max_length - 120))
+    query_inputs = _encode_plus_compat(
+        tokenizer,
+        query,
+        truncation=True,
+        max_length=max_query_tokens,
+        padding=False,
+    )
     max_passage_inputs_length = max_length - len(query_inputs["input_ids"]) - 2
     assert max_passage_inputs_length > 100, (
         "Your query is too long! Please make sure your query less than 400 tokens!"
@@ -57,13 +67,16 @@ def reranker_tokenize_preproc(
     res_merge_inputs = []
     res_merge_inputs_pids = []
     for pid, passage in enumerate(passages):
-        passage_inputs = _encode_plus_compat(
-            tokenizer,
-            passage,
-            truncation=False,
-            padding=False,
-            add_special_tokens=False,
-        )
+        # Long passages are windowed below; a single encode can exceed model max and only warns.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            passage_inputs = _encode_plus_compat(
+                tokenizer,
+                passage,
+                truncation=False,
+                padding=False,
+                add_special_tokens=False,
+            )
         passage_inputs_length = len(passage_inputs["input_ids"])
 
         if passage_inputs_length <= max_passage_inputs_length:

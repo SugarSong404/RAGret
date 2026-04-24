@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
+from ragret.quick_qa_agent import quick_qa_llm_configured, run_quick_qa
 from ragret.registry import IndexRegistry, safe_index_name
 
 from server.archive_util import is_tar_archive_filename, safe_extract_tar_archive
@@ -782,6 +783,7 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                             "push_fingerprints": "GET /api/push/{kb_name}/fingerprints (X-Webhook-Token)",
                             "build": "POST /api/indexes/build",
                             "jobs": "GET /api/jobs | GET /api/jobs/{job_id} | POST /api/jobs/{job_id}/cancel",
+                            "quick_qa": "POST /api/quick-qa",
                             "delete_index": "DELETE /api/indexes/{name}",
                         },
                     },
@@ -1264,6 +1266,161 @@ def make_handler_class(registry: IndexRegistry, root: Path, app_store: AppStore)
                     return
                 app_store.set_user_github_pat(int(uid), str(data.get("pat") or ""))
                 _send_json(self, 200, {"ok": True})
+                return
+            if len(parts) == 2 and parts[0].lower() == "api" and parts[1].lower() == "quick-qa":
+                uid = self._require_user_id()
+                if uid is None:
+                    return
+                data = self._read_json_body()
+                if data is None:
+                    return
+                q = str(data.get("question") or "").strip()
+                if not q:
+                    _send_json(self, 400, {"ok": False, "error": "question is required"})
+                    return
+                want_stream = bool(data.get("stream"))
+                lang = str(data.get("lang") or "zh").strip().lower()
+                raw_messages = data.get("messages")
+                messages: list[dict[str, str]] = []
+                if isinstance(raw_messages, list):
+                    for item in raw_messages:
+                        if not isinstance(item, dict):
+                            continue
+                        role = str(item.get("role") or "").strip().lower()
+                        content = str(item.get("content") or "").strip()
+                        if role not in ("user", "assistant") or not content:
+                            continue
+                        messages.append({"role": role, "content": content})
+                if len(messages) > 24:
+                    messages = messages[-24:]
+
+                def _stream_send(obj: dict[str, Any]) -> None:
+                    line = (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
+                    self.wfile.write(line)
+                    try:
+                        self.wfile.flush()
+                    except OSError:
+                        pass
+
+                if want_stream:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.end_headers()
+                from ragret.rag import search_db
+
+                rows = app_store.list_owned_and_subscribed_knowledge_bases_for_user(int(uid))
+                allowed_kbs = [str(r.name) for r in rows]
+
+                def _list_available_kbs() -> list[str]:
+                    return list(allowed_kbs)
+
+                def _search_in_kb(kb_name: str, query: str) -> str:
+                    kb = str(kb_name or "").strip()
+                    if kb not in allowed_kbs:
+                        return f"知识库 {kb} 不存在或无权限访问。"
+                    db_path_raw = app_store.resolve_kb_db_path(kb)
+                    if not db_path_raw:
+                        return f"知识库 {kb} 无可用索引。"
+                    db_path = Path(db_path_raw)
+                    if not db_path.is_file():
+                        return f"知识库 {kb} 无可用索引。"
+                    return str(
+                        search_db(
+                            db_path,
+                            str(query or ""),
+                            k=8,
+                            score_threshold=0.3,
+                            rerank_top_n=5,
+                        )
+                        or ""
+                    )
+
+                if not quick_qa_llm_configured():
+                    blocks: list[str] = []
+                    for kb_name in allowed_kbs:
+                        try:
+                            rtxt = _search_in_kb(kb_name, q)
+                        except Exception:
+                            continue
+                        txt = str(rtxt or "").strip()
+                        if not txt:
+                            continue
+                        blocks.append(f"[{kb_name}]\n{txt}")
+                        if len(blocks) >= 3:
+                            break
+                    if blocks:
+                        answer = "\n\n---\n\n".join(blocks)
+                    else:
+                        answer = "未配置完整 LLM 参数，已切换为索引直返模式；当前未检索到匹配内容。"
+                    if want_stream:
+                        _stream_send(
+                            {
+                                "type": "final",
+                                "ok": True,
+                                "answer": answer,
+                                "used_tool": False,
+                                "tool_name": "",
+                                "mode": "direct_index",
+                            }
+                        )
+                        return
+                    _send_json(
+                        self,
+                        200,
+                        {
+                            "ok": True,
+                            "answer": answer,
+                            "used_tool": False,
+                            "tool_name": "",
+                            "mode": "direct_index",
+                        },
+                    )
+                    return
+                try:
+                    def _on_tool_event(msg: str) -> None:
+                        if want_stream:
+                            _stream_send({"type": "tool_event", "text": str(msg or "")})
+
+                    result = run_quick_qa(
+                        q,
+                        list_available_kbs=_list_available_kbs,
+                        search_in_kb=_search_in_kb,
+                        messages=messages,
+                        on_tool_event=_on_tool_event,
+                        lang=lang,
+                    )
+                except Exception as e:
+                    if want_stream:
+                        _stream_send({"type": "error", "ok": False, "error": str(e)})
+                        return
+                    _send_json(self, 500, {"ok": False, "error": str(e)})
+                    return
+                if want_stream:
+                    _stream_send(
+                        {
+                            "type": "final",
+                            "ok": True,
+                            "answer": str(result.get("answer") or ""),
+                            "used_tool": bool(result.get("used_tool")),
+                            "tool_name": str(result.get("tool_name") or ""),
+                            "tool_events": list(result.get("tool_events") or []),
+                            "mode": "llm",
+                        }
+                    )
+                    return
+                _send_json(
+                    self,
+                    200,
+                    {
+                        "ok": True,
+                        "answer": str(result.get("answer") or ""),
+                        "used_tool": bool(result.get("used_tool")),
+                        "tool_name": str(result.get("tool_name") or ""),
+                        "tool_events": list(result.get("tool_events") or []),
+                        "mode": "llm",
+                    },
+                )
                 return
 
             _send_json(self, 404, {"ok": False, "error": "Not found"})

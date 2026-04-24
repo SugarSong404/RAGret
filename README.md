@@ -8,7 +8,11 @@
   <a href="https://github.com/SugarSong404/RAGret/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=flat-square" alt="PRs welcome" /></a>
 </p>
 
-<p align="center">中文文档 · <a href="README.zh-CN.md">README.zh-CN.md</a></p>
+<p align="center">English · <a href="README.md">README.md</a></p>
+
+# **RAGret**
+
+中文文档 · [README.zh-CN.md](README.zh-CN.md)
 
 ## What is RAGret?
 
@@ -26,10 +30,12 @@ With `RAGret`, team members can publish knowledge bases to a shared hub, subscri
 
 ### Stack
 
-Indexing and retrieval use **BCE embedding + SQLite + BCE reranking**, backed by:
+Indexing and retrieval use **BCE embedding + SQLite + BM25 + RRF fusion + BCE reranking**, backed by:
 
 - [BCEmbedding (GitHub)](https://github.com/netease-youdao/BCEmbedding)
 - [Models on Hugging Face](https://huggingface.co/maidalun1020) (`bce-embedding-base_v1`, `bce-reranker-base_v1`)
+- SQLite **FTS5 BM25** for lexical retrieval (keyword exact-match / sparse signal).
+- **RRF (Reciprocal Rank Fusion)** to merge dense retrieval and BM25 candidate lists before reranking.
 
 ## Quick start
 
@@ -38,7 +44,7 @@ Pick **one** GPU path: **CUDA** or **Intel XPU**. Pick **one** runtime: **local 
 **General notes:**
 
 - Use only one GPU stack and one runtime per environment.
-- **Hugging Face mirror (optional):** if downloads are slow or blocked, set **`HF_ENDPOINT`** before running **`warmup_hf_models.py`** or **`docker build`** (see below).
+- **Hugging Face mirror (optional):** if downloads are slow or blocked, set `**HF_ENDPOINT`** before running `**warmup_hf_models.py`** or `**docker build**` (see below).
 
 ```bash
 # Windows PowerShell
@@ -54,23 +60,19 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 1. **Python 3.10+** (tested on 3.12). Create a venv or conda env.
 2. **Install PyTorch for your GPU (pick one):**
-   - **NVIDIA CUDA:** follow **[Start Locally](https://pytorch.org/get-started/locally/)**, or e.g.  
-     `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124`
-   - **Intel XPU:** follow **[Get started with Intel GPU](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html)**. After installing the [Intel GPU drivers](https://www.intel.com/content/www/us/en/developer/articles/tool/pytorch-prerequisites-for-intel-gpu.html), e.g.  
-     `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/xpu`
+  - **NVIDIA CUDA:** follow **[Start Locally](https://pytorch.org/get-started/locally/)**, or e.g.  
+   `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124`
+  - **Intel XPU:** follow **[Get started with Intel GPU](https://docs.pytorch.org/docs/stable/notes/get_start_xpu.html)**. After installing the [Intel GPU drivers](https://www.intel.com/content/www/us/en/developer/articles/tool/pytorch-prerequisites-for-intel-gpu.html), e.g.  
+  `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/xpu`
 3. **App deps:** `pip install -r requirements.txt`
 4. **Models (once, before indexing/search):** from the **repo root**, online:
-
-   ```bash
+  ```bash
    python warmup_hf_models.py
-   ```
-
-   Weights land in **`./models`**. You can also download BCE weights manually into **`./models`**.
-
+  ```
+   Weights land in `**./models**`. You can also download BCE weights manually into `**./models**`.
 5. **Verify GPU:**
-   - CUDA: `python -c "import torch; print(torch.cuda.is_available())"` → `True`
-   - XPU: `python -c "import torch; print(torch.xpu.is_available())"` → `True`
-
+  - CUDA: `python -c "import torch; print(torch.cuda.is_available())"` → `True`
+  - XPU: `python -c "import torch; print(torch.xpu.is_available())"` → `True`
    On **Intel XPU**, only **embedding** uses the GPU; upstream **BCEmbedding** **rerank** does not support **XPU**.
 
 ---
@@ -79,7 +81,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 This repo’s Docker image targets **CUDA** only (`Dockerfile`). For Intel XPU, use **local Python** above.
 
-Build (warmup bakes weights into **`/opt/hf`** in the image):
+Build (warmup bakes weights into `**/opt/hf`** in the image):
 
 ```bash
 docker build -t ragret .
@@ -87,7 +89,7 @@ docker build -t ragret .
 docker build -t ragret --build-arg HF_ENDPOINT=https://hf-mirror.com .
 ```
 
-Run with **`--gpus all`** (or `'--gpus "device=0"'`).
+Run with `**--gpus all**` (or `'--gpus "device=0"'`).
 
 ```bash
 docker run --name ragret -it --gpus all -p 8765:8765 ragret
@@ -113,6 +115,15 @@ From the repo root:
 
 ```bash
 python ragret.py serve --host 0.0.0.0 --port 8765
+```
+
+If you want Quick Q&A to use a OpenAI-compatible API:
+
+```bash
+python ragret.py serve --host 0.0.0.0 --port 8765 \
+  --llm-base-url https://api.openai.com/v1 \
+  --llm-model gpt-4o-mini \
+  --llm-api-key YOUR_API_KEY
 ```
 
 ## User guide
@@ -166,13 +177,11 @@ Notes:
 
 ![rebuild](assets/screenshot_rebuild.png)
 
-4. Use the search box at the bottom to try retrieval against the base.
-
 ### Using knowledge bases
 
 1. Subscribe in **Knowledge hub**.
 2. Copy an API key from **Account**.
-3. Set **`RAGRET_API_KEY`**.
+3. Set `**RAGRET_API_KEY`**.
 
 **GET requests:**
 
@@ -191,3 +200,4 @@ curl -sS -G "$BASE/api/search/INDEX_NAME" -H "X-API-Key: $RAGRET_API_KEY" --data
 2. Sync with Feishu and similar online docs.
 3. Distributed deployment for higher concurrency and larger teams.
 4. Stability fixes across the stack.
+

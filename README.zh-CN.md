@@ -26,10 +26,12 @@
 
 ### 技术栈
 
-索引与检索采用 **BCE 嵌入 + SQLite + BCE 重排序**，依赖：
+索引与检索采用 **BCE 嵌入 + SQLite + BM25 + RRF 融合 + BCE 重排序**，依赖：
 
 - [BCEmbedding（GitHub）](https://github.com/netease-youdao/BCEmbedding)
 - [Hugging Face 上的模型](https://huggingface.co/maidalun1020)（`bce-embedding-base_v1`、`bce-reranker-base_v1`）
+- SQLite **FTS5 BM25** 用于词法检索（关键词精确匹配 / 稀疏信号）。
+- **RRF（Reciprocal Rank Fusion）** 在重排序前融合稠密检索与 BM25 的候选列表。
 
 ## 快速开始
 
@@ -115,6 +117,15 @@ npm run build
 python ragret.py serve --host 0.0.0.0 --port 8765
 ```
 
+如果你希望“快速问答”页面调用OpenAI兼容接口，请在启动时显式传入以下参数：
+
+```bash
+python ragret.py serve --host 0.0.0.0 --port 8765 \
+  --llm-base-url https://api.openai.com/v1 \
+  --llm-model gpt-4o-mini \
+  --llm-api-key YOUR_API_KEY
+```
+
 ## 使用说明
 
 ### 偏好与凭据
@@ -165,8 +176,6 @@ python ragret.py serve --host 0.0.0.0 --port 8765
 3. Webhook 类型可在此页手动从仓库拉取。
 
 ![rebuild](assets/screenshot_rebuild.png)
-
-4. 使用页面底部搜索框可针对该知识库试检索。
 
 ### 使用知识库
 

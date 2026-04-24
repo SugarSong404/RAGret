@@ -5,13 +5,24 @@ Upstream ``BCEmbedding.tools.langchain.BCERerank`` targets older LangChain; this
 """
 from __future__ import annotations
 
+import os
+from typing import Any, Optional, Sequence
+
 import ragret.compat  # noqa: F401 — multiprocess patch before other imports
 
 from ragret.bce_embedding_rerank_patch import patch_bce_embedding_reranker_tokenize
 
 patch_bce_embedding_reranker_tokenize()
 
-from typing import Any, Optional, Sequence
+_RERANK_PASSAGE_CHARS = max(256, int(os.environ.get("RAGRET_RERANK_PASSAGE_CHARS", "1000")))
+
+
+def _clip_passage_for_rerank(passage: str) -> str:
+    """BCE reranker is 512 tokens total (query+passage); long index chunks must be clipped."""
+    t = passage.replace("\n", " ").strip()
+    if len(t) <= _RERANK_PASSAGE_CHARS:
+        return t
+    return t[: _RERANK_PASSAGE_CHARS - 1] + "…"
 
 from langchain_core.callbacks.manager import Callbacks
 from langchain_core.documents import BaseDocumentCompressor, Document
@@ -63,7 +74,7 @@ class RagretBCERerank(BaseDocumentCompressor):
         for d in doc_list:
             passage = d.page_content
             if isinstance(passage, str) and len(passage) > 0:
-                passages.append(passage.replace("\n", " "))
+                passages.append(_clip_passage_for_rerank(passage))
                 valid_doc_list.append(d)
             else:
                 invalid_doc_list.append(d)

@@ -6,8 +6,12 @@ pydantic>=2
 langchain-core
 langchain-community
 langchain-huggingface
+langchain-openai
 langchain-text-splitters
+langgraph
+openai
 BCEmbedding
+
 # Hugging Face tokenizers: SentencePieceExtractor needs both (missing either → TikToken fallback → .bpe.model parse error).
 sentencepiece>=0.1.99
 protobuf>=3.20
